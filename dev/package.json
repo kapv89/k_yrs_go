@@ -1,0 +1,18 @@
+{
+  "name": "dev",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "healthz": "tsx healthz.ts",
+    "dev": "sudo docker-compose up -d",
+    "down": "sudo docker-compose down"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "axios": "^1.6.2",
+    "tsx": "^4.6.2"
+  }
+}

@@ -1,0 +1,44 @@
+version: '3.8'
+services:
+  k_yrs_redis:
+    container_name: k_yrs_redis
+    image: redis:latest
+    command: redis-server
+    ports:
+      - '6379:6379'
+  k_yrs_pg:
+    container_name: k_yrs_pg
+    image: postgres:latest
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: k_yrs_dev
+    volumes:
+      - ./docker-data/pg:/var/lib/postgresql/data
+  k_yrs_redis_test:
+    container_name: k_yrs_redis_test
+    image: redis:latest
+    command: redis-server
+    ports:
+      - '6380:6379'
+  k_yrs_pg_test:
+    container_name: k_yrs_pg_test
+    image: postgres:14
+    ports:
+      - '5433:5432'
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: k_yrs_test
+  k_yrs_infra_healthcheck:
+    container_name: k_yrs_infra_healthcheck
+    image: vad1mo/hello-world-rest
+    ports:
+      - '5050:5050'
+    depends_on:
+      - k_yrs_redis
+      - k_yrs_redis_test
+      - k_yrs_pg
+      - k_yrs_pg_test
