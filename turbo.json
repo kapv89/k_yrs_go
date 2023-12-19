@@ -8,6 +8,10 @@
       "dev#dev": {
         "cache": false,
         "dependsOn": []
+      },
+      "dev#down": {
+        "cache": false,
+        "dependsOn": []
       }
     }
   }
