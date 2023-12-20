@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "healthz": "tsx healthz.ts",
-    "dev": "sudo docker-compose up -d",
-    "down": "sudo docker-compose down"
+    "dev": "docker-compose up -d",
+    "down": "docker-compose down"
   },
   "keywords": [],
   "author": "",

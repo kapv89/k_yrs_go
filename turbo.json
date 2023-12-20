@@ -3,15 +3,23 @@
     "pipeline": {
       "dev": {
         "cache": false,
-        "dependsOn": ["dev#dev"]
+        "dependsOn": ["dev#dev", "server#dev"]
       },
       "dev#dev": {
+        "cache": false,
+        "dependsOn": []
+      },
+      "dev#healthz": {
         "cache": false,
         "dependsOn": []
       },
       "dev#down": {
         "cache": false,
         "dependsOn": []
+      },
+      "server#dev": {
+        "cache": false,
+        "dependsOn": ["dev#healthz"]
       }
     }
   }
