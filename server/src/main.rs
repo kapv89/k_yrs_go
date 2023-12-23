@@ -8,6 +8,7 @@ use bb8_redis::{bb8, RedisConnectionManager};
 use actix_web::web::{Bytes, BytesMut};
 use bb8_postgres::PostgresConnectionManager;
 use tokio_postgres::NoTls;
+use tokio_postgres::types::ToSql;
 
 type RedisPool = bb8::Pool<RedisConnectionManager>;
 
@@ -31,29 +32,71 @@ async fn post_doc_update(
     path: web::Path<(String,)>,
     mut body: Multipart,
     redis_pool: web::Data<Mutex<RedisPool>>,
+    pg_pool: web::Data<Mutex<bb8::Pool<PostgresConnectionManager<NoTls>>>>,
     config: web::Data<Config>,
 ) -> impl Responder {
     let (doc_id,) = path.into_inner();
-    let redis_queue_key = format!("{}{}", config.redis_queue_prefix, doc_id);
 
     while let Ok(Some(mut field)) = body.try_next().await {
         let content_type = field.content_disposition();
         let field_name = content_type.get_name().unwrap();
 
         if field_name == "data" {
-            let mut bytes = BytesMut::new();
+            let mut bytes_mut = BytesMut::new();
             while let Some(chunk) = field.next().await {
                 let data = chunk.unwrap();
-                bytes.extend_from_slice(&data);
+                bytes_mut.extend_from_slice(&data);
             }
 
-            let _ = redis_queue_push(redis_pool, redis_queue_key, bytes.freeze(), config).await;
+            let bytes = bytes_mut.freeze();
+
+            let _ = redis_queue_push(redis_pool.clone(), doc_id.clone(), bytes.clone(), config.clone()).await;
+            let _ = write_to_wal(pg_pool.clone(), doc_id.clone(), bytes.clone()).await;
+            let _ = write_to_doc_store(pg_pool.clone(), doc_id.clone(), bytes.clone()).await;
 
             return HttpResponse::Ok().body(format!("Document {} update received", doc_id));
         }
     }
 
     HttpResponse::BadRequest().body("Field 'data' not found")
+}
+
+async fn write_to_doc_store(
+    pg_pool: web::Data<Mutex<bb8::Pool<PostgresConnectionManager<NoTls>>>>,
+    doc_id: String,
+    data: Bytes,
+) -> Result<(), String> {
+    let pg_pool_mutex_guard = pg_pool.lock().unwrap();
+    let pg_conn_res = pg_pool_mutex_guard.get().await;
+    if pg_conn_res.is_err() {
+        return Err("Failed to get PostgreSQL connection from pool".to_string());
+    }
+    let pg_conn = pg_conn_res.unwrap();
+
+    let stmt = pg_conn.prepare("INSERT INTO store (doc_id, data) VALUES ($1, $2)").await.unwrap();
+    let params: [&(dyn ToSql + Sync); 2] = [&doc_id, &data.to_vec()];
+    pg_conn.execute(&stmt, &params).await.unwrap();
+
+    Ok(())
+}
+
+async fn write_to_wal(
+    pg_pool: web::Data<Mutex<bb8::Pool<PostgresConnectionManager<NoTls>>>>,
+    doc_id: String,
+    data: Bytes,
+) -> Result<(), String> {
+    let pg_pool_mutex_guard = pg_pool.lock().unwrap();
+    let pg_conn_res = pg_pool_mutex_guard.get().await;
+    if pg_conn_res.is_err() {
+        return Err("Failed to get PostgreSQL connection from pool".to_string());
+    }
+    let pg_conn = pg_conn_res.unwrap();
+
+    let stmt = pg_conn.prepare("INSERT INTO wal (doc_id, data) VALUES ($1, $2)").await.unwrap();
+    let params: [&(dyn ToSql + Sync); 2] = [&doc_id, &data.to_vec()];
+    pg_conn.execute(&stmt, &params).await.unwrap();
+
+    Ok(())
 }
 
 const REDIS_QUEUE_PUSH_LUA_SCRIPT: &'static str = r#"
@@ -70,10 +113,12 @@ redis.call('RPUSH', queue_key, data)
 
 async fn redis_queue_push(
     redis_pool: web::Data<Mutex<RedisPool>>,
-    redis_queue_key: String,
+    doc_id: String,
     data: Bytes,
     config: web::Data<Config>,
 ) -> Result<(), String> {
+    let redis_queue_key = format!("{}{}", config.redis_queue_prefix, doc_id);
+
     let pool = redis_pool.lock().unwrap();
     let mut redis_conn = pool.get().await.unwrap();
     let data_vec = data.to_vec();
@@ -101,26 +146,14 @@ async fn main() -> std::io::Result<()> {
     let server_host = env::var("SERVER_HOST").expect("SERVER_HOST must be set");
     let server_port = env::var("SERVER_PORT").expect("SERVER_PORT must be set");
 
-    let redis_host = env::var("REDIS_HOST").expect("REDIS_HOST must be set");
-    let redis_port = env::var("REDIS_PORT").expect("REDIS_PORT must be set");
-    let redis_url = format!("redis://{}:{}", redis_host, redis_port);
-
     // Set up Redis connection manager
+    let redis_url = env::var("REDIS_URL").expect("REDIS_URL must be set");
     let redis_manager = RedisConnectionManager::new(redis_url).unwrap();
     let redis_pool = bb8::Pool::builder().build(redis_manager).await.unwrap();
 
-    let pg_user = env::var("PG_USER").expect("PG_USER must be set");
-    let pg_pass = env::var("PG_PASS").expect("PG_PASS must be set");
-    let pg_db = env::var("PG_DB").expect("PG_DB must be set");
-    let pg_host = env::var("PG_HOST").expect("PG_HOST must be set");
-    let pg_port = env::var("PG_PORT").expect("PG_PORT must be set");
-
-    let pg_url = format!(
-        "postgres://{}:{}@{}:{}/{}",
-        pg_user, pg_pass, pg_host, pg_port, pg_db
-    );
-
+    
     // Set up PostgreSQL connection manager
+    let pg_url = env::var("PG_URL").expect("PG_URL must be set");
     let pg_manager = PostgresConnectionManager::new_from_stringlike(pg_url, NoTls).unwrap();
     let pg_pool = bb8::Pool::builder().build(pg_manager).await.unwrap();
 
