@@ -9,6 +9,8 @@ use actix_web::web::{Bytes, BytesMut};
 use bb8_postgres::PostgresConnectionManager;
 use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
+use tokio::task;
+use tokio::task::block_in_place;
 
 type RedisPool = bb8::Pool<RedisConnectionManager>;
 
@@ -50,9 +52,15 @@ async fn post_doc_update(
 
             let bytes = bytes_mut.freeze();
 
-            let _ = redis_queue_push(redis_pool.clone(), doc_id.clone(), bytes.clone(), config.clone()).await;
-            let _ = write_to_wal(pg_pool.clone(), doc_id.clone(), bytes.clone()).await;
-            let _ = write_to_doc_store(pg_pool.clone(), doc_id.clone(), bytes.clone()).await;
+            let redis_queue_push_task = tokio::task::spawn_blocking(move || {
+                block_in_place(|| {
+                    redis_queue_push(redis_pool.clone(), doc_id.clone(), bytes.clone(), config.clone())
+                })
+            });
+            let write_to_wal_task = task::spawn(write_to_wal(pg_pool.clone(), doc_id.clone(), bytes.clone()));
+            let write_to_doc_store_task = task::spawn(write_to_doc_store(pg_pool.clone(), doc_id.clone(), bytes.clone()));
+
+            let (_, _, _) = tokio::try_join!(redis_queue_push_task, write_to_wal_task, write_to_doc_store_task)?;
 
             return HttpResponse::Ok().body(format!("Document {} update received", doc_id));
         }
