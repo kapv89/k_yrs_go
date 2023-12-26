@@ -10,7 +10,7 @@ use bb8_postgres::PostgresConnectionManager;
 use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
 use tokio::task;
-use tokio::task::block_in_place;
+use futures::future;
 
 type RedisPool = bb8::Pool<RedisConnectionManager>;
 
@@ -29,6 +29,8 @@ async fn healthz() -> impl Responder {
     HttpResponse::Ok().body("OK")
 }
 
+const DATA_FIELD_NAME: &'static str = "data";
+
 #[post("/docs/{doc_id}/updates")]
 async fn post_doc_update(
     path: web::Path<(String,)>,
@@ -43,7 +45,7 @@ async fn post_doc_update(
         let content_type = field.content_disposition();
         let field_name = content_type.get_name().unwrap();
 
-        if field_name == "data" {
+        if field_name == DATA_FIELD_NAME {
             let mut bytes_mut = BytesMut::new();
             while let Some(chunk) = field.next().await {
                 let data = chunk.unwrap();
@@ -53,7 +55,7 @@ async fn post_doc_update(
             let bytes = bytes_mut.freeze();
 
             let redis_queue_push_task = tokio::task::spawn_blocking(move || {
-                block_in_place(|| {
+                task::block_in_place(|| {
                     redis_queue_push(redis_pool.clone(), doc_id.clone(), bytes.clone(), config.clone())
                 })
             });
@@ -119,7 +121,7 @@ end
 redis.call('RPUSH', queue_key, data)
 "#;
 
-async fn redis_queue_push(
+fn redis_queue_push(
     redis_pool: web::Data<Mutex<RedisPool>>,
     doc_id: String,
     data: Bytes,
@@ -127,16 +129,24 @@ async fn redis_queue_push(
 ) -> Result<(), String> {
     let redis_queue_key = format!("{}{}", config.redis_queue_prefix, doc_id);
 
+    // Acquire a blocking lock on the Redis pool
     let pool = redis_pool.lock().unwrap();
-    let mut redis_conn = pool.get().await.unwrap();
+    
+    // Get a Redis connection in a blocking manner
+    let mut redis_conn = tokio::task::block_in_place(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            pool.get().await.map_err(|err| format!("Failed to get Redis connection: {}", err))
+        })
+    })?;
+    
     let data_vec = data.to_vec();
 
+    // Invoke Lua script synchronously
     let _: () = redis::Script::new(REDIS_QUEUE_PUSH_LUA_SCRIPT)
         .key(&redis_queue_key)
         .arg(&data_vec)
         .arg(config.redis_max_queue_size)
-        .invoke_async(&mut *redis_conn)
-        .await
+        .invoke(&mut *redis_conn)
         .map_err(|err| format!("Failed to execute Lua script for `redis_queue_push`: {}", err))?;
 
     Ok(())
