@@ -9,7 +9,10 @@ import "C"
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
+	"server/db"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,6 +27,10 @@ var (
 	mode       string
 )
 
+var (
+	dbh *db.DB
+)
+
 func init() {
 	flag.IntVar(&serverPort, "SERVER_PORT", 3000, "Server port")
 	flag.StringVar(&redisURL, "REDIS_URL", "", "Redis URL")
@@ -32,7 +39,16 @@ func init() {
 	flag.Parse()
 }
 
-var db = make(map[string]string)
+func init() {
+	var err error
+	dbh, err = db.NewDB(db.DBConfig{
+		RedisURL: redisURL,
+		PGURL:    pgURL,
+	})
+	if err != nil {
+		panic(err)
+	}
+}
 
 func setupRouter() *gin.Engine {
 	// Disable Console Color
@@ -43,61 +59,59 @@ func setupRouter() *gin.Engine {
 		c.String(http.StatusOK, "ok")
 	})
 
-	r.POST("/docs/:id/updates", func(c *gin.Context) {
+	r.GET("/docs/:id/updates", func(c *gin.Context) {
 		docID := c.Params.ByName("id")
-		c.String(http.StatusOK, "docID: %s", docID)
-		fmt.Println("--->docID: ", docID)
-	})
-
-	// Ping test
-	r.GET("/ping", func(c *gin.Context) {
-		c.String(http.StatusOK, "pong")
-	})
-
-	// Get user value
-	r.GET("/user/:name", func(c *gin.Context) {
-		user := c.Params.ByName("name")
-		value, ok := db[user]
-		if ok {
-			c.JSON(http.StatusOK, gin.H{"user": user, "value": value})
-		} else {
-			c.JSON(http.StatusOK, gin.H{"user": user, "status": "no value"})
-		}
-	})
-
-	// Authorized group (uses gin.BasicAuth() middleware)
-	// Same than:
-	// authorized := r.Group("/")
-	// authorized.Use(gin.BasicAuth(gin.Credentials{
-	//	  "foo":  "bar",
-	//	  "manu": "123",
-	//}))
-	authorized := r.Group("/", gin.BasicAuth(gin.Accounts{
-		"foo":  "bar", // user:foo password:bar
-		"manu": "123", // user:manu password:123
-	}))
-
-	/* example curl for /admin with basicauth header
-	   Zm9vOmJhcg== is base64("foo:bar")
-
-		curl -X POST \
-	  	http://localhost:8080/admin \
-	  	-H 'authorization: Basic Zm9vOmJhcg==' \
-	  	-H 'content-type: application/json' \
-	  	-d '{"value":"bar"}'
-	*/
-	authorized.POST("admin", func(c *gin.Context) {
-		user := c.MustGet(gin.AuthUserKey).(string)
-
-		// Parse JSON
-		var json struct {
-			Value string `json:"value" binding:"required"`
+		update, err := dbh.GetCombinedYUpdate(c.Request.Context(), docID)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error reading updates from redis")
+			return
 		}
 
-		if c.Bind(&json) == nil {
-			db[user] = json.Value
-			c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		c.Data(http.StatusOK, "application/octet-stream", update)
+	})
+
+	r.POST("/docs/:id/updates", func(c *gin.Context) {
+		contentType := c.Request.Header.Get("Content-Type")
+		if contentType != "application/octet-stream" {
+			c.String(http.StatusBadRequest, "Invalid content type")
+			return
 		}
+
+		docID := c.Params.ByName("id")
+
+		// Read binary data from request body
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			// Handle error
+			c.String(http.StatusInternalServerError, "Error reading request body")
+			return
+		}
+
+		// Log the binary data
+		wgAck := sync.WaitGroup{}
+		wgAck.Add(2)
+
+		go func() {
+			defer wgAck.Done()
+			dbh.PG.WriteYUpdateToWAL(c.Request.Context(), docID, body)
+		}()
+		go func() {
+			defer wgAck.Done()
+			dbh.Redis.PushYUpdate(c.Request.Context(), docID, body)
+		}()
+
+		wgCommit := sync.WaitGroup{}
+		wgCommit.Add(1)
+		go func() {
+			defer wgCommit.Done()
+			dbh.PG.WriteYUpdateToStore(c.Request.Context(), docID, body)
+		}()
+
+		wgAck.Wait()
+
+		c.String(http.StatusOK, "ok")
+
+		wgCommit.Wait()
 	})
 
 	return r
@@ -110,6 +124,6 @@ func main() {
 	fmt.Println("Hello, world!")
 
 	r := setupRouter()
-	// Listen and Server in 0.0.0.0:8080
+	// Listen and Server in 0.0.0.0:3000
 	r.Run(":3000")
 }
