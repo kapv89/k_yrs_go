@@ -1,3 +1,14 @@
+# .air.toml
+
+# Command to run
+# cmd = "go run main.go"
 [build]
-  bin = ";export $(grep -v '^#' .env | xargs); ./tmp/main"
-  cmd = "go build -o ./tmp/main ."
+    full_bin = "go run main.go --SERVER_PORT=$SERVER_PORT --REDIS_URL=$REDIS_URL --PG_URL=$PG_URL"
+
+
+# Add your environment variables here
+[env]
+    SERVER_PORT = "3000"
+    REDIS_URL = "redis://localhost:6379"
+    PG_URL = "postgres://dev:dev@localhost:5432/k_yrs_dev"
+    # Add other environment variables as needed

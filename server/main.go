@@ -43,6 +43,8 @@ func init() {
 }
 
 func init() {
+	fmt.Printf("redisURL: %s\npgURL: %s\n", redisURL, pgURL)
+
 	var err error
 	dbh, err = db.NewDB(db.DBConfig{
 		RedisURL: redisURL,
@@ -61,6 +63,8 @@ func setupRouter() *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
+
+	r.SetTrustedProxies(nil)
 
 	if user != "" && password != "" {
 		r.Use(gin.BasicAuth(gin.Accounts{
