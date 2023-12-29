@@ -4,10 +4,13 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "LD_LIBRARY_PATH=. air",
+    "dev": ". ./.env && LD_LIBRARY_PATH=./db air",
     "healthz": "tsx healthz.ts"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "dotenv-cli": "^7.3.0"
+  }
 }

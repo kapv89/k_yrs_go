@@ -1,20 +1,15 @@
 package main
 
-/*
-#cgo LDFLAGS: -L. -lyrs
-#include <libyrs.h>
-*/
-import "C"
-
 import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"server/db"
-	"sync"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/errgroup"
 )
 
 const DEFAULT_SERVE_PORT = 3000
@@ -25,10 +20,16 @@ var (
 	redisURL   string
 	pgURL      string
 	mode       string
+	user       string
+	password   string
 )
 
 var (
 	dbh *db.DB
+)
+
+var (
+	dataConsistencyErrChan chan error
 )
 
 func init() {
@@ -36,6 +37,8 @@ func init() {
 	flag.StringVar(&redisURL, "REDIS_URL", "", "Redis URL")
 	flag.StringVar(&pgURL, "PG_URL", "", "PostgreSQL URL")
 	flag.StringVar(&mode, "MODE", DEFAULT_MODE, "Mode")
+	flag.StringVar(&user, "USER", "", "User")
+	flag.StringVar(&password, "PASSWORD", "", "Password")
 	flag.Parse()
 }
 
@@ -50,10 +53,20 @@ func init() {
 	}
 }
 
+func init() {
+	dataConsistencyErrChan = make(chan error)
+}
+
 func setupRouter() *gin.Engine {
 	// Disable Console Color
 	// gin.DisableConsoleColor()
 	r := gin.Default()
+
+	if user != "" && password != "" {
+		r.Use(gin.BasicAuth(gin.Accounts{
+			user: password,
+		}))
+	}
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
@@ -61,13 +74,20 @@ func setupRouter() *gin.Engine {
 
 	r.GET("/docs/:id/updates", func(c *gin.Context) {
 		docID := c.Params.ByName("id")
-		update, err := dbh.GetCombinedYUpdate(c.Request.Context(), docID)
+		res, err := dbh.GetCombinedYUpdate(c.Request.Context(), docID)
 		if err != nil {
 			c.String(http.StatusInternalServerError, "Error reading updates from redis")
 			return
 		}
 
-		c.Data(http.StatusOK, "application/octet-stream", update)
+		c.Data(http.StatusOK, "application/octet-stream", res.CombinedUpdate)
+
+		if res.ShouldPerformCompaction {
+			err = dbh.PG.PerformCompaction(c.Request.Context(), docID, res.LastId, res.CombinedUpdate)
+			if err != nil {
+				dataConsistencyErrChan <- fmt.Errorf("error performing compaction: %v", err)
+			}
+		}
 	})
 
 	r.POST("/docs/:id/updates", func(c *gin.Context) {
@@ -79,51 +99,61 @@ func setupRouter() *gin.Engine {
 
 		docID := c.Params.ByName("id")
 
-		// Read binary data from request body
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
-			// Handle error
 			c.String(http.StatusInternalServerError, "Error reading request body")
 			return
 		}
 
-		// Log the binary data
-		wgAck := sync.WaitGroup{}
-		wgAck.Add(2)
+		ackErrgroup, ackEgctx := errgroup.WithContext(c.Request.Context())
+		ackErrgroup.SetLimit(2)
 
-		go func() {
-			defer wgAck.Done()
-			dbh.PG.WriteYUpdateToWAL(c.Request.Context(), docID, body)
-		}()
-		go func() {
-			defer wgAck.Done()
-			dbh.Redis.PushYUpdate(c.Request.Context(), docID, body)
-		}()
+		ackErrgroup.Go(func() error {
+			return dbh.PG.WriteYUpdateToWAL(ackEgctx, docID, body)
+		})
 
-		wgCommit := sync.WaitGroup{}
-		wgCommit.Add(1)
-		go func() {
-			defer wgCommit.Done()
-			dbh.PG.WriteYUpdateToStore(c.Request.Context(), docID, body)
-		}()
+		ackErrgroup.Go(func() error {
+			return dbh.Redis.PushYUpdate(ackEgctx, docID, body)
+		})
 
-		wgAck.Wait()
+		commitErrgroup, commitEgctx := errgroup.WithContext(c.Request.Context())
+		commitErrgroup.SetLimit(1)
+
+		commitErrgroup.Go(func() error {
+			return dbh.PG.WriteYUpdateToStore(commitEgctx, docID, body)
+		})
+
+		err = ackErrgroup.Wait()
+		if err != nil {
+			c.String(http.StatusInternalServerError, "Error writing updates: %v", err)
+			return
+		}
 
 		c.String(http.StatusOK, "ok")
 
-		wgCommit.Wait()
+		err = commitErrgroup.Wait()
+		if err != nil {
+			dataConsistencyErrChan <- fmt.Errorf("error writing updates to store: %v", err)
+		}
 	})
 
 	return r
 }
 
 func main() {
-	ydoc := C.ydoc_new()
+	log.Printf("Starting server on port %d\n\n", serverPort)
 
-	fmt.Printf("ydoc: %v\n", ydoc)
-	fmt.Println("Hello, world!")
+	serverErrChan := make(chan error)
 
-	r := setupRouter()
-	// Listen and Server in 0.0.0.0:3000
-	r.Run(":3000")
+	go func() {
+		r := setupRouter()
+		serverErrChan <- r.Run(fmt.Sprintf(":%d", serverPort))
+	}()
+
+	select {
+	case err := <-serverErrChan:
+		log.Fatalf("Error running server: %v", err)
+	case err := <-dataConsistencyErrChan:
+		log.Fatalf("Data consistency error: %v", err)
+	}
 }
