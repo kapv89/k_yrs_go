@@ -12,7 +12,6 @@ import (
 	"database/sql"
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 	"unsafe"
 
@@ -21,6 +20,8 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/redis/go-redis/v9"
+
+	"golang.org/x/sync/errgroup"
 )
 
 func generateULID() (ulid.ULID, error) {
@@ -205,11 +206,11 @@ func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombined
 	}
 	defer rows.Close()
 
-	var updates [][]byte
 	var lastId string
+	var updates [][]byte
 	for rows.Next() {
-		var update []byte
 		var id string
+		var update []byte
 		err := rows.Scan(&id, &update)
 		if err != nil {
 			return PGCombinedYUpdateRes{
@@ -232,7 +233,7 @@ func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombined
 }
 
 func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID string, combinedUpdate []byte) error {
-	deleteUpdates := func() error {
+	deleteUpdates := func(ctx context.Context) error {
 		// Delete rows from store table
 		_, err := p.client.ExecContext(ctx, "DELETE FROM kyrs_go_yupdates_store WHERE doc_id = $1 AND id <= $2", docID, lastID)
 		if err != nil {
@@ -242,7 +243,7 @@ func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID strin
 		return nil
 	}
 
-	insertCombinedUpdate := func() error {
+	insertCombinedUpdate := func(ctx context.Context) error {
 		// Insert combined update with new ULID
 		newID, err := generateULID()
 		if err != nil {
@@ -257,21 +258,18 @@ func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID strin
 		return nil
 	}
 
-	wg := sync.WaitGroup{}
-	wg.Add(2)
+	errgroup, egctx := errgroup.WithContext(ctx)
+	errgroup.SetLimit(2)
 
-	// TODO: handle errors
+	errgroup.Go(func() error {
+		return deleteUpdates(egctx)
+	})
 
-	go func() {
-		defer wg.Done()
-		deleteUpdates()
-	}()
-	go func() {
-		defer wg.Done()
-		insertCombinedUpdate()
-	}()
+	errgroup.Go(func() error {
+		return insertCombinedUpdate(egctx)
+	})
 
-	return nil
+	return errgroup.Wait()
 }
 
 type DB struct {
