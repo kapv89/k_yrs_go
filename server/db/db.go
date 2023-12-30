@@ -148,6 +148,12 @@ type PGDB struct {
 	client *sql.DB
 }
 
+type PGCombinedYUpdateRes struct {
+	CombinedUpdate []byte
+	LastId         string
+	UpdatesCount   int
+}
+
 func NewPGDB(url string) (*PGDB, error) {
 	db, err := sql.Open("postgres", url)
 	if err != nil {
@@ -161,6 +167,107 @@ func NewPGDB(url string) (*PGDB, error) {
 
 func (p *PGDB) Close() error {
 	return p.client.Close()
+}
+
+func (p *PGDB) SetupTables(ctx context.Context) error {
+	if _, err := p.client.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS kyrs_go_yupdates_wal (
+			ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			id TEXT,
+			doc_id TEXT NOT NULL,
+			data BYTEA NOT NULL,
+
+			PRIMARY KEY (ts, id)
+		) PARTITION BY RANGE (ts);
+	`); err != nil {
+		return fmt.Errorf("failed to create WAL table: %v", err)
+	}
+
+	if _, err := p.client.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS kyrs_go_yupdates_store (
+			id TEXT PRIMARY KEY,
+			doc_id TEXT NOT NULL,
+			data BYTEA NOT NULL
+		);
+
+		CREATE INDEX IF NOT EXISTS kyrs_go_yupdates_store_doc_id_idx ON kyrs_go_yupdates_store (doc_id);
+	`); err != nil {
+		return fmt.Errorf("failed to create store table: %v", err)
+	}
+
+	return nil
+}
+
+func (p *PGDB) ManageWALPartitions(ctx context.Context) error {
+	// 1. partitions should be created with the format - k_yrs_go_yupdates_wal_YYYYMMDDHH
+	// 2. fetch the partition with lexicographically largest name (which will also be the latest partition). check if the hour-timestamp
+	//    is the same as the current hour timestamp. if yes, then no need to create a new partition. if no, then create a new partition
+	// 3. start a ticker, which every 1 minute checks if the latest partition is the same as the current hour timestamp. if not, then
+	//    create a new partition
+
+	latestPartition, err := p.fetchLatestPartition(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch latest partition: %v", err)
+	}
+
+	currentHourTimestamp := time.Now().Format("2006010215")
+	partitionName := "k_yrs_go_yupdates_wal_" + currentHourTimestamp
+
+	if latestPartition != partitionName {
+		err = p.createPartition(ctx, partitionName)
+		if err != nil {
+			return fmt.Errorf("failed to create new partition: %v", err)
+		}
+	}
+
+	// Start a ticker to check if the latest partition is the same as the current hour timestamp
+	ticker := time.NewTicker(1 * time.Minute)
+	for range ticker.C {
+		currentHourTimestamp := time.Now().Format("2006010215")
+		partitionName := "k_yrs_go_yupdates_wal_" + currentHourTimestamp
+		latestPartition, err := p.fetchLatestPartition(ctx)
+		if err != nil {
+			ticker.Stop()
+			return fmt.Errorf("failed to fetch latest partition: %v", err)
+		}
+
+		if latestPartition != "" && latestPartition != partitionName {
+			err = p.createPartition(ctx, partitionName)
+			if err != nil {
+				ticker.Stop()
+				return fmt.Errorf("failed to create new partition: %v", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (p *PGDB) fetchLatestPartition(ctx context.Context) (string, error) {
+	rows, err := p.client.QueryContext(ctx, "SELECT partition_name FROM information_schema.partitions WHERE table_name = 'kyrs_go_yupdates_wal' ORDER BY partition_name DESC LIMIT 1")
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch latest partition: %v", err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		var partitionName string
+		err := rows.Scan(&partitionName)
+		if err != nil {
+			return "", fmt.Errorf("failed to scan latest partition: %v", err)
+		}
+		return partitionName, nil
+	}
+
+	return "", nil
+}
+
+func (p *PGDB) createPartition(ctx context.Context, partitionName string) error {
+	_, err := p.client.ExecContext(ctx, fmt.Sprintf("CREATE TABLE IF NOT EXISTS kyrs_go_yupdates_wal_%s (LIKE kyrs_go_yupdates_wal INCLUDING CONSTRAINTS)", partitionName))
+	if err != nil {
+		return fmt.Errorf("failed to create partition: %v", err)
+	}
+	return nil
 }
 
 func (p *PGDB) WriteYUpdateToWAL(ctx context.Context, docID string, update []byte) error {
@@ -187,12 +294,6 @@ func (p *PGDB) WriteYUpdateToStore(ctx context.Context, docID string, update []b
 		return fmt.Errorf("failed to write update to store: %v", err)
 	}
 	return nil
-}
-
-type PGCombinedYUpdateRes struct {
-	CombinedUpdate []byte
-	LastId         string
-	UpdatesCount   int
 }
 
 func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombinedYUpdateRes, error) {

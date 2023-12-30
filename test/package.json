@@ -1,0 +1,22 @@
+{
+  "name": "test",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "dotenv -- tsx --test --watch test.ts"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "@types/uuid": "^9.0.7",
+    "dotenv-cli": "^7.3.0",
+    "tsx": "^4.7.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.3",
+    "uuid": "^9.0.1",
+    "yjs": "^13.6.10"
+  }
+}

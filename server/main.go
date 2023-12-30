@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -148,6 +149,12 @@ func main() {
 	log.Printf("Starting server on port %d\n\n", serverPort)
 
 	serverErrChan := make(chan error)
+	ctx := context.Background()
+
+	err := dbh.PG.SetupTables(ctx)
+	if err != nil {
+		serverErrChan <- fmt.Errorf("error setting up tables: %v", err)
+	}
 
 	go func() {
 		r := setupRouter()
