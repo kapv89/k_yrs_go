@@ -161,6 +161,10 @@ func main() {
 		serverErrChan <- r.Run(fmt.Sprintf(":%d", serverPort))
 	}()
 
+	go func() {
+		dataConsistencyErrChan <- dbh.PG.ManageWALPartitions(ctx)
+	}()
+
 	select {
 	case err := <-serverErrChan:
 		log.Fatalf("Error running server: %v", err)
