@@ -44,8 +44,6 @@ func init() {
 }
 
 func init() {
-	fmt.Printf("redisURL: %s\npgURL: %s\n", redisURL, pgURL)
-
 	var err error
 	dbh, err = db.NewDB(db.DBConfig{
 		RedisURL: redisURL,
@@ -149,12 +147,17 @@ func main() {
 	log.Printf("Starting server on port %d\n\n", serverPort)
 
 	serverErrChan := make(chan error)
+	tablesSetupChan := make(chan bool)
 	ctx := context.Background()
 
-	err := dbh.PG.SetupTables(ctx)
-	if err != nil {
-		serverErrChan <- fmt.Errorf("error setting up tables: %v", err)
-	}
+	go func() {
+		err := dbh.PG.SetupTables(ctx)
+		if err != nil {
+			serverErrChan <- fmt.Errorf("error setting up tables: %v", err)
+		}
+
+		tablesSetupChan <- true
+	}()
 
 	go func() {
 		r := setupRouter()
@@ -162,6 +165,7 @@ func main() {
 	}()
 
 	go func() {
+		<-tablesSetupChan
 		dataConsistencyErrChan <- dbh.PG.ManageWALPartitions(ctx)
 	}()
 
@@ -170,5 +174,7 @@ func main() {
 		log.Fatalf("Error running server: %v", err)
 	case err := <-dataConsistencyErrChan:
 		log.Fatalf("Data consistency error: %v", err)
+	case <-ctx.Done():
+		log.Println("Server stopped")
 	}
 }
