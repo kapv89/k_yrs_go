@@ -11,15 +11,21 @@ import { createEnv } from 'neon-env';
 const log = (key: string, value?: any) => typeof value !== "undefined" ? console.log(`======> ${key}`, value) : console.log(`======> ${key}:`);
 
 const defaults = {
+    SERVER_URL: 'http://localhost:3000',
+    PG_URL: 'postgres://dev:dev@localhost:5432/k_yrs_dev?sslmode=disable',
+    REDIS_URL: 'redis://localhost:6379',
     RW_Y_OPS_WAIT_MS: 0,
     COMPACTION_ITERS: 1,
-    COMPACTION_YDOC_UPDATE_INTERVAL_MS: 5,
-    COMPACTION_YDOC_UPDATE_ITERS: 1000,
+    COMPACTION_YDOC_UPDATE_INTERVAL_MS: 0,
+    COMPACTION_YDOC_UPDATE_ITERS: 1100,
     COMPACTION_Y_OPS_WAIT: 0
 } as const;
 
 
 const env = createEnv({
+    SERVER_URL: {type: 'string', default: defaults.SERVER_URL},
+    PG_URL: {type: 'string', default: defaults.PG_URL},
+    REDIS_URL: {type: 'string', default: defaults.REDIS_URL},
     RW_Y_OPS_WAIT_MS: {type: 'number', default: defaults.RW_Y_OPS_WAIT_MS},
     COMPACTION_ITERS: {type: 'number', default: defaults.COMPACTION_ITERS},
     YDOC_UPDATE_INTERVAL_MS: {type: 'number', default: defaults.COMPACTION_YDOC_UPDATE_INTERVAL_MS},
@@ -28,7 +34,7 @@ const env = createEnv({
 });
 
 const wait = async (ms: number) => { if (ms === 0) { return; } else { await new Promise(resolve => setTimeout(resolve, ms)); } };
-const api = axios.create({ baseURL: 'http://localhost:3000' });
+const api = axios.create({ baseURL: env.SERVER_URL });
 let redis: Redis;
 let db: knex.Knex 
 
@@ -64,7 +70,7 @@ before(async () => {
 
     db = knex({
         client: 'pg',
-        connection: 'postgres://dev:dev@localhost:5432/k_yrs_dev?sslmode=disable',
+        connection: env.PG_URL,
     });
 
    await deleteAllRows();

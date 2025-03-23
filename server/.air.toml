@@ -1,14 +1,3 @@
 # .air.toml
-
-# Command to run
-# cmd = "go run main.go"
 [build]
-    full_bin = "go run main.go --SERVER_PORT=$SERVER_PORT --REDIS_URL=$REDIS_URL --PG_URL=$PG_URL --MODE=$MODE --DEBUG=$DEBUG"
-
-
-# Add your environment variables here
-[env]
-    SERVER_PORT = "3000"
-    REDIS_URL = "redis://localhost:6379"
-    PG_URL = "postgres://dev:dev@localhost:5432/k_yrs_dev"
-    # Add other environment variables as needed
+    full_bin = "go run main.go --SERVER_PORT=$SERVER_PORT --REDIS_URL=$REDIS_URL --PG_URL=$PG_URL --MODE=$MODE --DEBUG=$DEBUG --REDIS_QUEUE_MAX_SIZE=$REDIS_QUEUE_MAX_SIZE"

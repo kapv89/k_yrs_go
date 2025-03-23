@@ -5,6 +5,18 @@
         "cache": false,
         "dependsOn": ["dev#dev", "server#dev"]
       },
+      "build": {
+        "cache": false,
+        "dependsOn": ["server#build"]
+      },
+      "test": {
+        "cache": false,
+        "dependsOn": ["test#test"]
+      },
+      "server": {
+        "cache": false,
+        "dependsOn": ["server#server"]
+      },
       "dev#dev": {
         "cache": false,
         "dependsOn": []
@@ -24,6 +36,22 @@
       "server#dev": {
         "cache": false,
         "dependsOn": ["server#setup_ffi", "dev#healthz"]
+      },
+      "server#build": {
+        "cache": false,
+        "dependsOn": ["server#setup_ffi"]
+      },
+      "server#server": {
+        "cache": false,
+        "dependsOn": ["server#build"]
+      },
+      "test#test": {
+        "cache": false,
+        "dependsOn": []
+      },
+      "test#test:compaction:stability": {
+        "cache": false,
+        "dependsOn": []
       }
     }
   }

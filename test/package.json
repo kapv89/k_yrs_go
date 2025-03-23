@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "dotenv -- tsx --test test.ts",
-    "test:compaction:stress": "COMPACTION_ITERS=100 dotenv -- tsx --test test.ts"
+    "test:compaction:stability": "COMPACTION_ITERS=100 dotenv -- tsx --test test.ts"
   },
   "author": "",
   "license": "ISC",

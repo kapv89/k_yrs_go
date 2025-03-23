@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"time"
 	"unsafe"
@@ -25,6 +26,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 )
+
+const DEFAULT_REDIS_QUEUE_KEY = "k_yrs_go.yupdates"
+const DEFAULT_REDIS_QUEUE_MAX_SIZE = 1000
 
 func generateULID() (ulid.ULID, error) {
 	t := time.Now()
@@ -101,10 +105,7 @@ type RedisDB struct {
 	queueMaxSize   int
 }
 
-const DEFAULT_REDIS_QUEUE_KEY = "k_yrs_go.yupdates"
-const DEFAULT_REDIS_QUEUE_MAX_SIZE = 100
-
-func NewRedisDB(url string) (*RedisDB, error) {
+func NewRedisDB(url string, redisQueueMaxSize int) (*RedisDB, error) {
 	opts, err := redis.ParseURL(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse redis url: %v", err)
@@ -114,7 +115,7 @@ func NewRedisDB(url string) (*RedisDB, error) {
 	return &RedisDB{
 		client:         client,
 		queueKeyPrefix: DEFAULT_REDIS_QUEUE_KEY,
-		queueMaxSize:   DEFAULT_REDIS_QUEUE_MAX_SIZE,
+		queueMaxSize:   int(math.Max(DEFAULT_REDIS_QUEUE_MAX_SIZE, float64(redisQueueMaxSize))),
 	}, nil
 }
 
@@ -219,7 +220,7 @@ func (p *PGDB) SetupTables(ctx context.Context) error {
 		return fmt.Errorf("failed to create store table: %v", err)
 	}
 
-	log.Printf("created table k_yrs_go_yupdates_store")
+	log.Printf("created table (if not exists) k_yrs_go_yupdates_store")
 
 	return nil
 }
@@ -315,13 +316,14 @@ type DB struct {
 }
 
 type DBConfig struct {
-	RedisURL string
-	PGURL    string
-	Debug    bool
+	RedisURL          string
+	PGURL             string
+	Debug             bool
+	RedisQueueMaxSize int
 }
 
 func NewDB(dbConfig DBConfig) (*DB, error) {
-	redisDB, err := NewRedisDB(dbConfig.RedisURL)
+	redisDB, err := NewRedisDB(dbConfig.RedisURL, dbConfig.RedisQueueMaxSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create redis db: %v", err)
 	}

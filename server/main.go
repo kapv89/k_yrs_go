@@ -17,13 +17,14 @@ const DEFAULT_SERVE_PORT = 3000
 const DEFAULT_MODE = "prod"
 
 var (
-	serverPort int
-	redisURL   string
-	pgURL      string
-	mode       string
-	user       string
-	password   string
-	debug      bool
+	serverPort        int
+	redisURL          string
+	pgURL             string
+	mode              string
+	user              string
+	password          string
+	debug             bool
+	redisQueueMaxSize int
 )
 
 var (
@@ -36,21 +37,23 @@ var (
 
 func init() {
 	flag.IntVar(&serverPort, "SERVER_PORT", 3000, "Server port")
-	flag.StringVar(&redisURL, "REDIS_URL", "", "Redis URL")
+	flag.StringVar(&redisURL, "REDIS_URL", "redis://localhost:6379", "Redis URL")
 	flag.StringVar(&pgURL, "PG_URL", "", "PostgreSQL URL")
 	flag.StringVar(&mode, "MODE", DEFAULT_MODE, "Mode")
 	flag.StringVar(&user, "USER", "", "User")
 	flag.StringVar(&password, "PASSWORD", "", "Password")
 	flag.BoolVar(&debug, "DEBUG", false, "Debug")
+	flag.IntVar(&redisQueueMaxSize, "REDIS_QUEUE_MAX_SIZE", 100, "Redis Queue Max Size")
 	flag.Parse()
 }
 
 func init() {
 	var err error
 	dbh, err = db.NewDB(db.DBConfig{
-		RedisURL: redisURL,
-		PGURL:    pgURL,
-		Debug:    debug,
+		RedisURL:          redisURL,
+		PGURL:             pgURL,
+		Debug:             debug,
+		RedisQueueMaxSize: redisQueueMaxSize,
 	})
 	if err != nil {
 		panic(err)

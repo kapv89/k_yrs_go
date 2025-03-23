@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "dev": "LD_LIBRARY_PATH=./db dotenv -- air",
+    "server": "./server.sh",
     "setup_ffi": "./setup_ffi.sh",
-    "build": "npm run setup_ffi && go build",
+    "build": "go build",
     "healthz": "tsx healthz.ts"
   },
   "keywords": [],
