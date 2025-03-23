@@ -3,7 +3,7 @@
 # Command to run
 # cmd = "go run main.go"
 [build]
-    full_bin = "go run main.go --SERVER_PORT=$SERVER_PORT --REDIS_URL=$REDIS_URL --PG_URL=$PG_URL --MODE=$MODE"
+    full_bin = "go run main.go --SERVER_PORT=$SERVER_PORT --REDIS_URL=$REDIS_URL --PG_URL=$PG_URL --MODE=$MODE --DEBUG=$DEBUG"
 
 
 # Add your environment variables here

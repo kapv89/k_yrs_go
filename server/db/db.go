@@ -57,8 +57,12 @@ func cStringToByteSlice(cstr *C.char) []byte {
 }
 
 func combineYUpdates(updates [][]byte) []byte {
-	ydoc := C.ydoc_new()
+	// Create a document with GC disabled.
+	opts := C.yoptions()
+	opts.skip_gc = 1
+	ydoc := C.ydoc_new_with_options(opts)
 
+	// Apply each update in order.
 	for _, update := range updates {
 		cUpdateStr := byteSliceToCString(update)
 		cBytesLen := C.uint(len(update))
@@ -70,16 +74,28 @@ func combineYUpdates(updates [][]byte) []byte {
 		C.free(unsafe.Pointer(cUpdateStr))
 	}
 
+	// Open a read transaction.
 	rtrx := C.ydoc_read_transaction(ydoc)
-	cBytesLen := C.uint(0)
-	cCombinedUpdate := C.ytransaction_state_vector_v1(rtrx, &cBytesLen)
-	combinedUpdate := cStringToByteSlice(cCombinedUpdate)
-	C.free(unsafe.Pointer(cCombinedUpdate))
+
+	// Obtain a snapshot descriptor of the document state.
+	var snapshotLen C.uint = 0
+	cSnapshot := C.ytransaction_snapshot(rtrx, &snapshotLen)
+
+	// Encode the snapshot to a full update.
+	var encodedLen C.uint = 0
+	cCombinedUpdate := C.ytransaction_encode_state_from_snapshot_v1(rtrx, cSnapshot, snapshotLen, &encodedLen)
+	combinedUpdate := C.GoBytes(unsafe.Pointer(cCombinedUpdate), C.int(encodedLen))
+
+	// Free allocated memory.
+	C.ybinary_destroy(cCombinedUpdate, encodedLen)
+	C.ystring_destroy(cSnapshot)
+	C.ydoc_destroy(ydoc)
 
 	return combinedUpdate
 }
 
 type RedisDB struct {
+	DB             *DB
 	client         *redis.Client
 	queueKeyPrefix string
 	queueMaxSize   int
@@ -151,6 +167,7 @@ func (r *RedisDB) GetYUpdates(ctx context.Context, docID string) ([][]byte, erro
 }
 
 type PGDB struct {
+	DB     *DB
 	client *sql.DB
 }
 
@@ -175,20 +192,21 @@ func (p *PGDB) Close() error {
 	return p.client.Close()
 }
 
-func (p *PGDB) SetupTables(ctx context.Context) error {
-	if _, err := p.client.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS k_yrs_go_yupdates_wal (
-			ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-			id TEXT,
-			doc_id TEXT NOT NULL,
-			data BYTEA NOT NULL,
-
-			PRIMARY KEY (ts, id)
-		) PARTITION BY RANGE (ts);
-	`); err != nil {
-		return fmt.Errorf("failed to create WAL table: %v", err)
+func (p *PGDB) Debug(key string, data []byte) error {
+	if !p.DB.Debug {
+		return nil
 	}
 
+	_, err := p.client.Exec("INSERT INTO debug (key, data) VALUES ($1, $2)", key, data)
+	if err != nil {
+		return fmt.Errorf("=======> Debug failed to write update to store: %v", err)
+	}
+
+	return nil
+
+}
+
+func (p *PGDB) SetupTables(ctx context.Context) error {
 	if _, err := p.client.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS k_yrs_go_yupdates_store (
 			id TEXT PRIMARY KEY,
@@ -201,189 +219,8 @@ func (p *PGDB) SetupTables(ctx context.Context) error {
 		return fmt.Errorf("failed to create store table: %v", err)
 	}
 
-	return nil
-}
+	log.Printf("created table k_yrs_go_yupdates_store")
 
-func (p *PGDB) ManageWALPartitions(ctx context.Context) error {
-	latestPartition, err := p.fetchLatestPartition(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to fetch latest partition: %v", err)
-	}
-
-	currentHourTimestamp := time.Now().Format("2006010215")
-	partitionName := "k_yrs_go_yupdates_wal_" + currentHourTimestamp
-
-	if latestPartition != partitionName {
-		err = p.createPartition(ctx, partitionName)
-		if err != nil {
-			return fmt.Errorf("failed to create new partition: %v", err)
-		}
-	}
-
-	partitionCreatorTickerChan := make(chan error)
-	partitionCreatorTickerFn := func() {
-		// Start a ticker to check if the latest partition is the same as the current hour timestamp
-		ticker := time.NewTicker(1 * time.Minute)
-		for range ticker.C {
-			currentHourTimestamp := time.Now().Format("2006010215")
-			tenMinAheadTimestamp := time.Now().Add(10 * time.Minute).Format("2006010215")
-			curHourPartitionName := "k_yrs_go_yupdates_wal_" + currentHourTimestamp
-			tenMinAheadPartitionName := "k_yrs_go_yupdates_wal_" + tenMinAheadTimestamp
-
-			latestPartition, err := p.fetchLatestPartition(ctx)
-			if err != nil {
-				ticker.Stop()
-				partitionCreatorTickerChan <- fmt.Errorf("failed to fetch latest partition: %v", err)
-			}
-
-			if latestPartition != "" && latestPartition != curHourPartitionName {
-				err = p.createPartition(ctx, curHourPartitionName)
-				if err != nil {
-					ticker.Stop()
-					partitionCreatorTickerChan <- fmt.Errorf("failed to create new partition: %v", err)
-				}
-			}
-
-			if latestPartition != "" && latestPartition != tenMinAheadPartitionName {
-				err = p.createPartition(ctx, tenMinAheadPartitionName)
-				if err != nil {
-					ticker.Stop()
-					partitionCreatorTickerChan <- fmt.Errorf("failed to create new partition: %v", err)
-				}
-			}
-		}
-	}
-
-	partitionDropperTickerChan := make(chan error)
-	partitionDropperTickerFn := func() {
-		// drop partitions older than 3 days
-		ticker := time.NewTicker(1 * time.Hour)
-		for range ticker.C {
-			// Calculate the timestamp for 3 days ago
-			threeDaysAgo := time.Now().Add(-72 * time.Hour).Format("2006010215")
-
-			// Generate the partition name pattern to match
-			partitionNamePattern := "k_yrs_go_yupdates_wal_" + threeDaysAgo + "*"
-
-			// Query for the partitions to drop
-			query := `
-				SELECT
-					pg_namespace.nspname || '.' || pg_class.relname AS partition_name
-				FROM
-					pg_partitioned_table
-				INNER JOIN
-					pg_class ON pg_partitioned_table.partrelid = pg_class.oid
-				INNER JOIN
-					pg_namespace ON pg_class.relnamespace = pg_namespace.oid
-				WHERE
-					pg_class.relname LIKE $1;
-			`
-
-			rows, err := p.client.Query(query, partitionNamePattern)
-			if err != nil {
-				partitionDropperTickerChan <- fmt.Errorf("failed to fetch partitions to drop: %v", err)
-				continue
-			}
-			defer rows.Close()
-
-			// Drop each partition
-			for rows.Next() {
-				var partitionName string
-				if err := rows.Scan(&partitionName); err != nil {
-					partitionDropperTickerChan <- fmt.Errorf("failed to scan partition name: %v", err)
-					continue
-				}
-
-				// Execute the drop partition statement
-				dropQuery := fmt.Sprintf("ALTER TABLE %s DETACH PARTITION", partitionName)
-				if _, err := p.client.Exec(dropQuery); err != nil {
-					partitionDropperTickerChan <- fmt.Errorf("failed to drop partition %s: %v", partitionName, err)
-				} else {
-					log.Printf("dropped partition: %s", partitionName)
-				}
-			}
-		}
-	}
-
-	go partitionCreatorTickerFn()
-	go partitionDropperTickerFn()
-
-	select {
-	case err := <-partitionCreatorTickerChan:
-		return err
-	case err := <-partitionDropperTickerChan:
-		return err
-	case <-ctx.Done():
-		return nil
-	}
-}
-
-func (p *PGDB) fetchLatestPartition(ctx context.Context) (string, error) {
-	query := `
-        SELECT
-            pg_namespace.nspname || '.' || pg_class.relname AS partition_name
-        FROM
-            pg_partitioned_table
-        INNER JOIN
-            pg_class ON pg_partitioned_table.partrelid = pg_class.oid
-        INNER JOIN
-            pg_namespace ON pg_class.relnamespace = pg_namespace.oid
-        WHERE
-            pg_class.relname = 'k_yrs_go_yupdates_wal'
-        ORDER BY
-            partition_name DESC
-        LIMIT 1;
-    `
-
-	rows, err := p.client.QueryContext(ctx, query)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch latest partition: %v", err)
-	}
-	defer rows.Close()
-
-	if rows.Next() {
-		var partitionName string
-		err := rows.Scan(&partitionName)
-		if err != nil {
-			return "", fmt.Errorf("failed to scan latest partition: %v", err)
-		}
-		return partitionName, nil
-	}
-
-	return "", nil
-}
-
-func (p *PGDB) createPartition(ctx context.Context, partitionName string) error {
-	// Create the partition
-	currentTime := time.Now().UTC()
-	rangeStart := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), currentTime.Hour(), 0, 0, 0, time.UTC)
-	rangeEnd := rangeStart.Add(time.Hour)
-
-	// Format timestamps for SQL
-	startTimestamp := rangeStart.Format(time.RFC3339)
-	endTimestamp := rangeEnd.Format(time.RFC3339)
-
-	// Construct the SQL command for a range partition
-	sqlCommand := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s PARTITION OF k_yrs_go_yupdates_wal FOR VALUES FROM ('%s') TO ('%s')", partitionName, startTimestamp, endTimestamp)
-
-	// Execute the SQL command
-	_, err := p.client.ExecContext(ctx, sqlCommand)
-	if err != nil {
-		return fmt.Errorf("failed to create partition: %v", err)
-	}
-	return nil
-}
-
-func (p *PGDB) WriteYUpdateToWAL(ctx context.Context, docID string, update []byte) error {
-	id, err := generateULID()
-	if err != nil {
-		return fmt.Errorf("failed to generate ULID in WriteYUpdateToWAL: %v", err)
-	}
-
-	_, err = p.client.ExecContext(ctx, "INSERT INTO k_yrs_go_yupdates_wal (id, doc_id, data) VALUES ($1, $2, $3)", id.String(), docID, update)
-	if err != nil {
-		return fmt.Errorf("failed to write update to WAL: %v", err)
-	}
 	return nil
 }
 
@@ -404,33 +241,25 @@ func (p *PGDB) WriteYUpdateToStore(ctx context.Context, docID string, update []b
 func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombinedYUpdateRes, error) {
 	rows, err := p.client.QueryContext(ctx, "SELECT id, data FROM k_yrs_go_yupdates_store WHERE doc_id = $1 order by id asc", docID)
 	if err != nil {
-		return PGCombinedYUpdateRes{
-			CombinedUpdate: nil,
-			LastId:         ulid.ULID{}.String(),
-			UpdatesCount:   0,
-		}, fmt.Errorf("failed to query updates from store: %v", err)
+		return PGCombinedYUpdateRes{}, fmt.Errorf("failed to query updates from store: %v", err)
 	}
 	defer rows.Close()
 
 	var lastId string
 	var updates [][]byte
 	for rows.Next() {
-
 		var id string
 		var update []byte
 		err := rows.Scan(&id, &update)
 		if err != nil {
-			return PGCombinedYUpdateRes{
-				CombinedUpdate: nil,
-				LastId:         ulid.ULID{}.String(),
-				UpdatesCount:   0,
-			}, fmt.Errorf("failed to scan update: %v", err)
+			return PGCombinedYUpdateRes{}, fmt.Errorf("failed to scan update: %v", err)
 		}
 		lastId = id
 		updates = append(updates, update)
 	}
 
 	combinedUpdate := combineYUpdates(updates)
+	p.Debug("server:combinedUpdate", combinedUpdate)
 
 	return PGCombinedYUpdateRes{
 		CombinedUpdate: combinedUpdate,
@@ -442,7 +271,7 @@ func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombined
 func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID string, combinedUpdate []byte) error {
 	deleteUpdates := func(ctx context.Context) error {
 		// Delete rows from store table
-		_, err := p.client.ExecContext(ctx, "DELETE FROM kyrs_go_yupdates_store WHERE doc_id = $1 AND id <= $2", docID, lastID)
+		_, err := p.client.ExecContext(ctx, "DELETE FROM k_yrs_go_yupdates_store WHERE doc_id = $1 AND id <= $2", docID, lastID)
 		if err != nil {
 			return fmt.Errorf("failed to delete rows from store table: %v", err)
 		}
@@ -457,7 +286,7 @@ func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID strin
 			return fmt.Errorf("failed to generate ULID in PerformCompaction: %v", err)
 		}
 
-		_, err = p.client.ExecContext(ctx, "INSERT INTO k_yrs_go_yupdates_store (doc_id, id, data) VALUES ($1, $2, $3)", docID, newID, combinedUpdate)
+		_, err = p.client.ExecContext(ctx, "INSERT INTO k_yrs_go_yupdates_store (doc_id, id, data) VALUES ($1, $2, $3)", docID, newID.String(), combinedUpdate)
 		if err != nil {
 			return fmt.Errorf("failed to insert combined update into store table: %v", err)
 		}
@@ -482,28 +311,36 @@ func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID strin
 type DB struct {
 	Redis *RedisDB
 	PG    *PGDB
+	Debug bool
 }
 
 type DBConfig struct {
 	RedisURL string
 	PGURL    string
+	Debug    bool
 }
 
-func NewDB(redisURL DBConfig) (*DB, error) {
-	redisDB, err := NewRedisDB(redisURL.RedisURL)
+func NewDB(dbConfig DBConfig) (*DB, error) {
+	redisDB, err := NewRedisDB(dbConfig.RedisURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create redis db: %v", err)
 	}
 
-	pgDB, err := NewPGDB(redisURL.PGURL)
+	pgDB, err := NewPGDB(dbConfig.PGURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pg db: %v", err)
 	}
 
-	return &DB{
+	db := &DB{
 		Redis: redisDB,
 		PG:    pgDB,
-	}, nil
+		Debug: dbConfig.Debug,
+	}
+
+	redisDB.DB = db
+	pgDB.DB = db
+
+	return db, nil
 }
 
 func (db *DB) Close() error {

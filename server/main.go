@@ -23,6 +23,7 @@ var (
 	mode       string
 	user       string
 	password   string
+	debug      bool
 )
 
 var (
@@ -40,6 +41,7 @@ func init() {
 	flag.StringVar(&mode, "MODE", DEFAULT_MODE, "Mode")
 	flag.StringVar(&user, "USER", "", "User")
 	flag.StringVar(&password, "PASSWORD", "", "Password")
+	flag.BoolVar(&debug, "DEBUG", false, "Debug")
 	flag.Parse()
 }
 
@@ -48,6 +50,7 @@ func init() {
 	dbh, err = db.NewDB(db.DBConfig{
 		RedisURL: redisURL,
 		PGURL:    pgURL,
+		Debug:    debug,
 	})
 	if err != nil {
 		panic(err)
@@ -55,7 +58,7 @@ func init() {
 }
 
 func init() {
-	dataConsistencyErrChan = make(chan error)
+	dataConsistencyErrChan = make(chan error, 1)
 }
 
 func setupRouter() *gin.Engine {
@@ -109,11 +112,7 @@ func setupRouter() *gin.Engine {
 		}
 
 		ackErrgroup, ackEgctx := errgroup.WithContext(c.Request.Context())
-		ackErrgroup.SetLimit(2)
-
-		ackErrgroup.Go(func() error {
-			return dbh.PG.WriteYUpdateToWAL(ackEgctx, docID, body)
-		})
+		ackErrgroup.SetLimit(1)
 
 		ackErrgroup.Go(func() error {
 			return dbh.Redis.PushYUpdate(ackEgctx, docID, body)
@@ -136,9 +135,11 @@ func setupRouter() *gin.Engine {
 
 		err = commitErrgroup.Wait()
 		if err != nil {
-			dataConsistencyErrChan <- fmt.Errorf("error writing updates to store: %v", err)
+			dataConsistencyErrChan <- fmt.Errorf("error writing doc:%s updates to store: %v", docID, err)
 		}
 	})
+
+	log.Print("Router setup complete\n")
 
 	return r
 }
@@ -146,34 +147,38 @@ func setupRouter() *gin.Engine {
 func main() {
 	log.Printf("Starting server on port %d\n\n", serverPort)
 
+	tablesSetupChan := make(chan struct{})
 	serverErrChan := make(chan error)
-	tablesSetupChan := make(chan bool)
 	ctx := context.Background()
 
 	go func() {
 		err := dbh.PG.SetupTables(ctx)
 		if err != nil {
 			serverErrChan <- fmt.Errorf("error setting up tables: %v", err)
+			close(serverErrChan)
 		}
 
-		tablesSetupChan <- true
+		tablesSetupChan <- struct{}{}
+		close(tablesSetupChan)
 	}()
 
 	go func() {
 		r := setupRouter()
 		serverErrChan <- r.Run(fmt.Sprintf(":%d", serverPort))
+		close(serverErrChan)
 	}()
 
+	<-tablesSetupChan
+
 	go func() {
-		<-tablesSetupChan
-		dataConsistencyErrChan <- dbh.PG.ManageWALPartitions(ctx)
+		for err := range dataConsistencyErrChan {
+			log.Printf("Data consistency error: %v", err)
+		}
 	}()
 
 	select {
 	case err := <-serverErrChan:
 		log.Fatalf("Error running server: %v", err)
-	case err := <-dataConsistencyErrChan:
-		log.Fatalf("Data consistency error: %v", err)
 	case <-ctx.Done():
 		log.Println("Server stopped")
 	}

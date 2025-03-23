@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "dotenv -- tsx --test test.ts"
+    "test": "dotenv -- tsx --test test.ts",
+    "test:compaction:stress": "COMPACTION_ITERS=100 dotenv -- tsx --test test.ts"
   },
   "author": "",
   "license": "ISC",
@@ -20,6 +21,7 @@
     "chai": "^5.0.0",
     "ioredis": "^5.3.2",
     "knex": "^3.1.0",
+    "neon-env": "^0.2.2",
     "pg": "^8.11.3",
     "uuid": "^9.0.1",
     "yjs": "^13.6.10"

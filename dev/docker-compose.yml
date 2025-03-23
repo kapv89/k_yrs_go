@@ -15,8 +15,6 @@ services:
       POSTGRES_USER: dev
       POSTGRES_PASSWORD: dev
       POSTGRES_DB: k_yrs_dev
-    volumes:
-      - ./docker-data/pg:/var/lib/postgresql/data
   k_yrs_redis_test:
     container_name: k_yrs_redis_test
     image: redis:latest
