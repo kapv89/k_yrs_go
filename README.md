@@ -214,6 +214,8 @@ turbo run test
 
 ### Build
 
+If you are running the dev setup, stop it. It's gonna be useless after `build` runs.
+
 ```bash
 turbo run build
 ```
