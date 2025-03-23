@@ -184,7 +184,7 @@ git clone --recurse-submodules git@github.com:kapv89/k_yrs_go.git
 ### Setup
 
 1. Install [docker](https://docs.docker.com/engine/install/) and [docker-compose](https://docs.docker.com/compose/install/)
-1. Make sure you can run `docker` without `sudo`.
+1. Make sure you can [run `docker` without `sudo`](https://docs.docker.com/engine/install/linux-postinstall/).
 1. [Install go](https://go.dev/doc/install)
 1. [Install rust](https://www.rust-lang.org/tools/install)
 1. [Install node.js v20.10.0+](https://github.com/nvm-sh/nvm)
