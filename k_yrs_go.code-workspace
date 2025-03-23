@@ -2,6 +2,9 @@
 	"folders": [
 		{
 			"path": "."
+		},
+		{
+			"path": "../Projects/yjs-scalable-ws-backend"
 		}
 	],
 	"settings": {}

@@ -258,3 +258,5 @@ REDIS_URL=redis://localhost:6379
 
 REDIS_QUEUE_MAX_SIZE=1000
 ```
+
+# USE WITH [`yjs-scalable-ws-backend](https://github.com/kapv89/yjs-scalable-ws-backend)
