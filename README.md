@@ -189,6 +189,7 @@ git clone --recurse-submodules git@github.com:kapv89/k_yrs_go.git
 1. [Install rust](https://www.rust-lang.org/tools/install)
 1. [Install node.js v20.10.0+](https://github.com/nvm-sh/nvm)
 1. Install [tsx](https://www.npmjs.com/package/tsx) globally `npm i -g tsx`
+1. Install [turbo](https://turbo.build/repo/docs/getting-started/installation) `npm i -g turbo`
 1. `cd k_yrs_go`
 1. `npm ci`
 
