@@ -45,29 +45,29 @@ Seems to be very fast on my system.
 The following test (keep track of the `env.*` variables) runs successfully with the default config for me::
 
 ```ts
+const defaults = {
+    SERVER_URL: 'http://localhost:3000',
+    PG_URL: 'postgres://dev:dev@localhost:5432/k_yrs_dev?sslmode=disable',
+    REDIS_URL: 'redis://localhost:6379',
+    RW_Y_OPS_WAIT_MS: 0,
+    COMPACTION_ITERS: 1,
+    COMPACTION_YDOC_UPDATE_INTERVAL_MS: 0,
+    COMPACTION_YDOC_UPDATE_ITERS: 1100,
+    COMPACTION_Y_OPS_WAIT: 0
+} as const;
+
+const env = createEnv({
+    SERVER_URL: {type: 'string', default: defaults.SERVER_URL},
+    PG_URL: {type: 'string', default: defaults.PG_URL},
+    REDIS_URL: {type: 'string', default: defaults.REDIS_URL},
+    RW_Y_OPS_WAIT_MS: {type: 'number', default: defaults.RW_Y_OPS_WAIT_MS},
+    COMPACTION_ITERS: {type: 'number', default: defaults.COMPACTION_ITERS},
+    YDOC_UPDATE_INTERVAL_MS: {type: 'number', default: defaults.COMPACTION_YDOC_UPDATE_INTERVAL_MS},
+    YDOC_UPDATE_ITERS: {type: 'number', default: defaults.COMPACTION_YDOC_UPDATE_ITERS},
+    Y_OPS_WAIT_MS: {type: 'number', default: defaults.COMPACTION_Y_OPS_WAIT}
+});
+
 new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
-    const defaults = {
-        SERVER_URL: 'http://localhost:3000',
-        PG_URL: 'postgres://dev:dev@localhost:5432/k_yrs_dev?sslmode=disable',
-        REDIS_URL: 'redis://localhost:6379',
-        RW_Y_OPS_WAIT_MS: 0,
-        COMPACTION_ITERS: 1,
-        COMPACTION_YDOC_UPDATE_INTERVAL_MS: 0,
-        COMPACTION_YDOC_UPDATE_ITERS: 1100,
-        COMPACTION_Y_OPS_WAIT: 0
-    } as const;
-
-    const env = createEnv({
-        SERVER_URL: {type: 'string', default: defaults.SERVER_URL},
-        PG_URL: {type: 'string', default: defaults.PG_URL},
-        REDIS_URL: {type: 'string', default: defaults.REDIS_URL},
-        RW_Y_OPS_WAIT_MS: {type: 'number', default: defaults.RW_Y_OPS_WAIT_MS},
-        COMPACTION_ITERS: {type: 'number', default: defaults.COMPACTION_ITERS},
-        YDOC_UPDATE_INTERVAL_MS: {type: 'number', default: defaults.COMPACTION_YDOC_UPDATE_INTERVAL_MS},
-        YDOC_UPDATE_ITERS: {type: 'number', default: defaults.COMPACTION_YDOC_UPDATE_ITERS},
-        Y_OPS_WAIT_MS: {type: 'number', default: defaults.COMPACTION_Y_OPS_WAIT}
-    });
-
     describe(`compaction iter ${i}`, () => {
         const docId = uuid();
         const ydoc = new Y.Doc();
@@ -103,16 +103,16 @@ new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
                         ystrlist.insert(ystrlist.length, [randomUUID().toString(), randomUUID().toString()])  
                     })
             
-                    if (iter === env.YDOC_UPDATE_ITERS) {
+                    if (iter === env.COMPACTION_YDOC_UPDATE_ITERS) {
                         clearInterval(t);
                         resolve();
                     }
-                }, env.YDOC_UPDATE_INTERVAL_MS);
+                }, env.COMPACTION_YDOC_UPDATE_INTERVAL_MS);
             });
 
             await p;
         
-            await wait(env.Y_OPS_WAIT_MS);
+            await wait(env.COMPACTION_Y_OPS_WAIT_MS);
 
             let countRes = await db('k_yrs_go_yupdates_store').where('doc_id', docId).count('id');
             let rowsInDB = Number(countRes[0].count)
@@ -123,7 +123,7 @@ new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
             const ydoc2 = new Y.Doc();
             Y.applyUpdate(ydoc2, update);
 
-            await wait(env.Y_OPS_WAIT_MS);
+            await wait(env.COMPACTION_Y_OPS_WAIT_MS);
             
             const yintlist2 = ydoc2.getArray<number>('int_list');
             const ystrlist2 = ydoc2.getArray<string>('str_list');
@@ -160,7 +160,7 @@ new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
             expect(intlistdiffs.length).to.equal(0);
             expect(strlistdiffs.length).to.equal(0);
 
-            await wait(env.Y_OPS_WAIT_MS);
+            await wait(env.COMPACTION_Y_OPS_WAIT_MS);
 
             countRes = await db('k_yrs_go_yupdates_store').where('doc_id', docId).count('id')
             rowsInDB = Number(countRes[0].count);
