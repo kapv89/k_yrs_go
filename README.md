@@ -45,7 +45,7 @@ turbo run build
 
 Server binary will be available as `k_yrs_go/server/server`.
 
-#### Run in prod
+#### Run prod binary
 
 You can see an example of running in prod in [server/server.sh](server/server.sh). Tweak it however you like.
 
@@ -65,3 +65,17 @@ If you want to run the prod binary with default dev infra, you can do the follow
     turbo run test
     ```
 
+### Configuration
+See the file [server/.env](server/.env)
+
+Relevant ones are:
+
+```bash
+SERVER_PORT=3000
+
+PG_URL=postgres://dev:dev@localhost:5432/k_yrs_dev?sslmode=disable
+
+REDIS_URL=redis://localhost:6379
+
+REDIS_QUEUE_MAX_SIZE=1000
+```
