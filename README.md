@@ -243,7 +243,9 @@ If you want to run the prod binary with default dev infra, you can do the follow
     ```
 
 ### Configuration
-See the file [server/.env](server/.env)
+See the file [`server/.env`](server/.env). You can tweak it however you want.
+
+To make sure tests run after your tweaking `server/.env`, you'd need to tweak [`test/.env](test/.env)
 
 Relevant ones are:
 
