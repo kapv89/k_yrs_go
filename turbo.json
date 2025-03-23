@@ -17,9 +17,13 @@
         "cache": false,
         "dependsOn": []
       },
+      "server#setup_ffi": {
+        "cache": false,
+        "dependsOn": []
+      },
       "server#dev": {
         "cache": false,
-        "dependsOn": ["dev#healthz"]
+        "dependsOn": ["server#setup_ffi", "dev#healthz"]
       }
     }
   }
