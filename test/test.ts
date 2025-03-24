@@ -209,7 +209,6 @@ new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
 
             const response = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
             const update = new Uint8Array(response.data);
-
             const ydoc2 = new Y.Doc();
             Y.applyUpdate(ydoc2, update);
 
@@ -256,6 +255,14 @@ new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
             rowsInDB = Number(countRes[0].count);
 
             expect(rowsInDB).to.lessThanOrEqual(100);
+
+            const response2 = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
+            const update2 = new Uint8Array(response2.data);
+
+            const str1 = String.fromCharCode(...update);
+            const str2 = String.fromCharCode(...update2);
+
+            expect(str1).equal(str2);
         })
 
         after(() => {
