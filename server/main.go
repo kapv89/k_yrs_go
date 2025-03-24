@@ -92,7 +92,7 @@ func setupRouter() *gin.Engine {
 		c.Data(http.StatusOK, "application/octet-stream", res.CombinedUpdate)
 
 		if res.ShouldPerformCompaction {
-			err = dbh.PG.PerformCompaction(c.Request.Context(), docID, res.LastId, res.CombinedUpdate)
+			err = dbh.PG.PerformCompaction(c.Request.Context(), docID, res.LastId, res.CombinedUpdate, res.PGUpdatesCount)
 			if err != nil {
 				dataConsistencyErrChan <- fmt.Errorf("error performing compaction: %v", err)
 			}

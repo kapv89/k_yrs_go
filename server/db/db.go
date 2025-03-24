@@ -19,7 +19,6 @@ import (
 	"unsafe"
 
 	"github.com/oklog/ulid/v2"
-	"golang.org/x/sync/errgroup"
 
 	_ "github.com/lib/pq"
 
@@ -268,7 +267,7 @@ func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombined
 	}, nil
 }
 
-func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID string, combinedUpdate []byte) error {
+func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID string, combinedUpdate []byte, pgUpdatesCount int) error {
 	// Begin a transaction with a serializable isolation level
 	tx, err := p.client.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelSerializable,
@@ -285,20 +284,18 @@ func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID strin
 		}
 	}()
 
-	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(2)
+	// Delete rows from the store table within the transaction.
+	res, err := tx.ExecContext(ctx, "DELETE FROM k_yrs_go_yupdates_store WHERE doc_id = $1 AND id <= $2", docID, lastID)
+	if err != nil {
+		return fmt.Errorf("failed to delete rows from store table: %v", err)
+	}
 
-	eg.Go(func() error {
-		// Delete rows from the store table within the transaction.
-		_, err = tx.ExecContext(egCtx, "DELETE FROM k_yrs_go_yupdates_store WHERE doc_id = $1 AND id <= $2", docID, lastID)
-		if err != nil {
-			return fmt.Errorf("failed to delete rows from store table: %v", err)
-		}
+	rowsDeleted, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to retrieve affected rows: %v", err)
+	}
 
-		return nil
-	})
-
-	eg.Go(func() error {
+	if int(rowsDeleted) == pgUpdatesCount {
 		// Generate a new ULID for the combined update.
 		newID, err := generateULID()
 		if err != nil {
@@ -310,12 +307,6 @@ func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID strin
 		if err != nil {
 			return fmt.Errorf("failed to insert combined update into store table: %v", err)
 		}
-
-		return nil
-	})
-
-	if err := eg.Wait(); err != nil {
-		return fmt.Errorf("compaction ops failed: %v", err)
 	}
 
 	// Commit the transaction.
@@ -374,6 +365,7 @@ type DBCombinedYUpdateRes struct {
 	CombinedUpdate          []byte
 	ShouldPerformCompaction bool
 	LastId                  string
+	PGUpdatesCount          int
 }
 
 func (db *DB) GetCombinedYUpdate(ctx context.Context, docID string) (DBCombinedYUpdateRes, error) {
@@ -419,6 +411,7 @@ func (db *DB) GetCombinedYUpdate(ctx context.Context, docID string) (DBCombinedY
 			CombinedUpdate:          pgCombinedUpdateRes.CombinedUpdate,
 			ShouldPerformCompaction: pgCombinedUpdateRes.UpdatesCount > 100,
 			LastId:                  pgCombinedUpdateRes.LastId,
+			PGUpdatesCount:          pgCombinedUpdateRes.UpdatesCount,
 		}, nil
 	} else {
 		combinedUpdate := combineYUpdates(append([][]byte{pgCombinedUpdateRes.CombinedUpdate}, redisUpdates...))
@@ -426,6 +419,7 @@ func (db *DB) GetCombinedYUpdate(ctx context.Context, docID string) (DBCombinedY
 			CombinedUpdate:          combinedUpdate,
 			ShouldPerformCompaction: pgCombinedUpdateRes.UpdatesCount > 100,
 			LastId:                  pgCombinedUpdateRes.LastId,
+			PGUpdatesCount:          pgCombinedUpdateRes.UpdatesCount,
 		}, nil
 	}
 }
