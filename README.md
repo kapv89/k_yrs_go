@@ -240,13 +240,13 @@ Directory structure for running prod binary using `server.sh` should look someth
 
 ```
 deployment/
-|- .env
-|- server
-|- server.sh
-|- db/
-    |- libyrs.a
-    |- libyrs.h
-    |- libyrs.so
+    |- .env
+    |- server
+    |- server.sh
+    |- db/
+        |- libyrs.a
+        |- libyrs.h
+        |- libyrs.so
 ```
 
 
