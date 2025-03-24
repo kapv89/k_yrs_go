@@ -19,12 +19,11 @@ import (
 	"unsafe"
 
 	"github.com/oklog/ulid/v2"
+	"golang.org/x/sync/errgroup"
 
 	_ "github.com/lib/pq"
 
 	"github.com/redis/go-redis/v9"
-
-	"golang.org/x/sync/errgroup"
 )
 
 const DEFAULT_REDIS_QUEUE_KEY = "k_yrs_go.yupdates"
@@ -270,43 +269,61 @@ func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombined
 }
 
 func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID string, combinedUpdate []byte) error {
-	deleteUpdates := func(ctx context.Context) error {
-		// Delete rows from store table
-		_, err := p.client.ExecContext(ctx, "DELETE FROM k_yrs_go_yupdates_store WHERE doc_id = $1 AND id <= $2", docID, lastID)
+	// Begin a transaction with a serializable isolation level
+	tx, err := p.client.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelSerializable,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %v", err)
+	}
+
+	// Ensure the transaction is rolled back in case of an error.
+	defer func() {
+		// If an error occurred, attempt to roll back the transaction.
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(2)
+
+	eg.Go(func() error {
+		// Delete rows from the store table within the transaction.
+		_, err = tx.ExecContext(egCtx, "DELETE FROM k_yrs_go_yupdates_store WHERE doc_id = $1 AND id <= $2", docID, lastID)
 		if err != nil {
 			return fmt.Errorf("failed to delete rows from store table: %v", err)
 		}
 
 		return nil
-	}
+	})
 
-	insertCombinedUpdate := func(ctx context.Context) error {
-		// Insert combined update with new ULID
+	eg.Go(func() error {
+		// Generate a new ULID for the combined update.
 		newID, err := generateULID()
 		if err != nil {
 			return fmt.Errorf("failed to generate ULID in PerformCompaction: %v", err)
 		}
 
-		_, err = p.client.ExecContext(ctx, "INSERT INTO k_yrs_go_yupdates_store (doc_id, id, data) VALUES ($1, $2, $3)", docID, newID.String(), combinedUpdate)
+		// Insert the combined update into the store table within the same transaction.
+		_, err = tx.ExecContext(ctx, "INSERT INTO k_yrs_go_yupdates_store (doc_id, id, data) VALUES ($1, $2, $3)", docID, newID.String(), combinedUpdate)
 		if err != nil {
 			return fmt.Errorf("failed to insert combined update into store table: %v", err)
 		}
 
 		return nil
+	})
+
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("compaction ops failed: %v", err)
 	}
 
-	errgroup, egctx := errgroup.WithContext(ctx)
-	errgroup.SetLimit(2)
+	// Commit the transaction.
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
 
-	errgroup.Go(func() error {
-		return deleteUpdates(egctx)
-	})
-
-	errgroup.Go(func() error {
-		return insertCombinedUpdate(egctx)
-	})
-
-	return errgroup.Wait()
+	return nil
 }
 
 type DB struct {
