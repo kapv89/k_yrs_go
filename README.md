@@ -230,6 +230,24 @@ like a normal API server over a Postgres DB and a Redis DB and things will work 
 #### Run prod binary
 
 You can see an example of running in prod in [server/server.sh](server/server.sh). Tweak it however you like.
+You'll also need the following generated files co-located with the `server` binary in a directory named `db`
+
+1. `server/db/libyrs.a`
+1. `server/db/libyrs.h`
+1. `server/db/libyrs.so`
+
+Directory structure for running prod binary using `server.sh` should look something like this:
+
+```
+deployment/
+|- .env
+|- server
+|- server.sh
+|- db/
+    |- libyrs.a
+    |- libyrs.h
+    |- libyrs.so
+```
 
 
 If you want to run the prod binary with default dev infra, you can do the following:
