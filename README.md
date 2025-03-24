@@ -13,12 +13,15 @@ CREATE TABLE IF NOT EXISTS k_yrs_go_yupdates_store (
 CREATE INDEX IF NOT EXISTS k_yrs_go_yupdates_store_doc_id_idx ON k_yrs_go_yupdates_store (doc_id);
 ```
 
+Rows in `k_yrs_go_yupdates_store` undergo compaction when fetching the state for a document if the number of
+rows of updates for the `doc_id` are > 100 in count.
+
 Usage:
 
 ```ts
 import axios from 'axios';
 
-const api = axios.create({ baseURL: env.SERVER_URL });
+const api = axios.create({ baseURL: env.SERVER_URL }); // `env.SERVER_URL is where `k_yrs_go/server` is deployed
 
 const docId = uuid();
 const ydoc = new Y.Doc();
@@ -221,7 +224,8 @@ If you are running the dev setup, stop it. It's gonna be useless after `build` r
 turbo run build
 ```
 
-Server binary will be available as `k_yrs_go/server/server`.
+Server binary will be available as `k_yrs_go/server/server`. You can deploy this server binary in a horizontally scalable manner
+like a normal API server over a Postgres DB and a Redis DB and things will work correctly.
 
 #### Run prod binary
 
