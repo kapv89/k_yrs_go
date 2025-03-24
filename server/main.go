@@ -17,6 +17,7 @@ const DEFAULT_SERVE_PORT = 3000
 const DEFAULT_MODE = "prod"
 
 var (
+	serverHost        string
 	serverPort        int
 	redisURL          string
 	pgURL             string
@@ -36,6 +37,7 @@ var (
 )
 
 func init() {
+	flag.StringVar(&serverHost, "SERVER_HOST", "localhost", "Server host")
 	flag.IntVar(&serverPort, "SERVER_PORT", 3000, "Server port")
 	flag.StringVar(&redisURL, "REDIS_URL", "redis://localhost:6379", "Redis URL")
 	flag.StringVar(&pgURL, "PG_URL", "", "PostgreSQL URL")
@@ -167,7 +169,7 @@ func main() {
 
 	go func() {
 		r := setupRouter()
-		serverErrChan <- r.Run(fmt.Sprintf(":%d", serverPort))
+		serverErrChan <- r.Run(fmt.Sprintf("%s:%d", serverHost, serverPort))
 		close(serverErrChan)
 	}()
 
