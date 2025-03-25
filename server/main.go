@@ -67,8 +67,8 @@ func init() {
 }
 
 func setupRouter() *gin.Engine {
-	// Disable Console Color
 	// gin.DisableConsoleColor()
+	// gin.SetMode(gin.Mode())
 	r := gin.Default()
 
 	r.SetTrustedProxies(nil)

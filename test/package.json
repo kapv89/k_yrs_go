@@ -5,12 +5,14 @@
   "main": "index.js",
   "scripts": {
     "test": "dotenv -- tsx --test test.ts",
-    "test:compaction:stability": "COMPACTION_ITERS=100 dotenv -- tsx --test test.ts"
+    "test:compaction:stability": "RW_ITERS=0 CONSISTENCY_ITERS=0 COMPACTION_ITERS=100 dotenv -- tsx --test test.ts",
+    "test:consistency": "RW_ITERS=0 COMPACTION_ITERS=0 CONSISTENCY_ITERS=1 CONSISTENCY_LOAD_TEST_ITERS=0 CONSISTENCY_SIMPLE_ITERS=80 CONSISTENCY_SIMPLE_READTIMEOUT_MS=100 dotenv -- tsx --test test.ts"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@types/chai": "^4.3.11",
+    "@types/lodash": "^4.17.16",
     "@types/node": "^20.10.5",
     "@types/uuid": "^9.0.7",
     "dotenv-cli": "^7.3.0",
@@ -22,6 +24,7 @@
     "ioredis": "^5.3.2",
     "knex": "^3.1.0",
     "lodash": "^4.17.21",
+    "log-update": "^6.1.0",
     "neon-env": "^0.2.2",
     "pg": "^8.11.3",
     "uuid": "^9.0.1",

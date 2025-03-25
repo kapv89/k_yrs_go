@@ -178,6 +178,7 @@ type PGCombinedYUpdateRes struct {
 
 func NewPGDB(url string) (*PGDB, error) {
 	db, err := sql.Open("postgres", url)
+	db.SetMaxOpenConns(100)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres db: %v", err)
 	}
@@ -224,22 +225,55 @@ func (p *PGDB) SetupTables(ctx context.Context) error {
 }
 
 func (p *PGDB) WriteYUpdateToStore(ctx context.Context, docID string, update []byte) error {
+	// Begin a new transaction with serializable isolation level.
+	tx, err := p.client.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return fmt.Errorf("failed to begin serializable transaction: %v", err)
+	}
+
+	// Ensure rollback if something goes wrong.
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Generate ULID for the new record.
 	id, err := generateULID()
 	if err != nil {
+		tx.Rollback()
 		return fmt.Errorf("failed to generate ULID in WriteYUpdateToStore: %v", err)
 	}
 
-	_, err = p.client.ExecContext(ctx, "INSERT INTO k_yrs_go_yupdates_store (id, doc_id, data) VALUES ($1, $2, $3)", id.String(), docID, update)
+	// Execute the insert within the transaction.
+	_, err = tx.ExecContext(ctx, "INSERT INTO k_yrs_go_yupdates_store (id, doc_id, data) VALUES ($1, $2, $3)", id.String(), docID, update)
 	if err != nil {
+		tx.Rollback()
 		return fmt.Errorf("failed to write update to store: %v", err)
+	}
+
+	// Commit the transaction.
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
 	}
 
 	return nil
 }
 
 func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombinedYUpdateRes, error) {
-	rows, err := p.client.QueryContext(ctx, "SELECT id, data FROM k_yrs_go_yupdates_store WHERE doc_id = $1 order by id asc", docID)
+	// Begin a read-only transaction with serializable isolation level.
+	tx, err := p.client.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelSerializable,
+		ReadOnly:  true,
+	})
 	if err != nil {
+		return PGCombinedYUpdateRes{}, fmt.Errorf("failed to begin serializable transaction: %v", err)
+	}
+
+	// Execute the query within the transaction.
+	rows, err := tx.QueryContext(ctx, "SELECT id, data FROM k_yrs_go_yupdates_store WHERE doc_id = $1 ORDER BY id ASC", docID)
+	if err != nil {
+		tx.Rollback()
 		return PGCombinedYUpdateRes{}, fmt.Errorf("failed to query updates from store: %v", err)
 	}
 	defer rows.Close()
@@ -249,17 +283,24 @@ func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombined
 	for rows.Next() {
 		var id string
 		var update []byte
-		err := rows.Scan(&id, &update)
-		if err != nil {
+		if err := rows.Scan(&id, &update); err != nil {
+			tx.Rollback()
 			return PGCombinedYUpdateRes{}, fmt.Errorf("failed to scan update: %v", err)
 		}
 		lastId = id
 		updates = append(updates, update)
 	}
+	if err := rows.Err(); err != nil {
+		tx.Rollback()
+		return PGCombinedYUpdateRes{}, fmt.Errorf("error iterating rows: %v", err)
+	}
+
+	// Commit the transaction.
+	if err := tx.Commit(); err != nil {
+		return PGCombinedYUpdateRes{}, fmt.Errorf("failed to commit transaction: %v", err)
+	}
 
 	combinedUpdate := combineYUpdates(updates)
-	p.Debug("server:combinedUpdate", combinedUpdate)
-
 	return PGCombinedYUpdateRes{
 		CombinedUpdate: combinedUpdate,
 		LastId:         lastId,
@@ -268,6 +309,8 @@ func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombined
 }
 
 func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID string, combinedUpdate []byte, pgUpdatesCount int) error {
+	p.Debug(fmt.Sprintf("compacting %s", lastID), combinedUpdate)
+
 	// Begin a transaction with a serializable isolation level
 	tx, err := p.client.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelSerializable,
@@ -395,31 +438,36 @@ func (db *DB) GetCombinedYUpdate(ctx context.Context, docID string) (DBCombinedY
 
 	redisUpdates := <-redisCh
 	pgCombinedUpdateRes := <-pgCh
+	var res DBCombinedYUpdateRes
 
 	if redisUpdates == nil && pgCombinedUpdateRes == nil {
-		return DBCombinedYUpdateRes{
+		res = DBCombinedYUpdateRes{
 			CombinedUpdate:          []byte{},
 			ShouldPerformCompaction: false,
-		}, nil
+		}
 	} else if pgCombinedUpdateRes == nil {
-		return DBCombinedYUpdateRes{
+		res = DBCombinedYUpdateRes{
 			CombinedUpdate:          combineYUpdates(redisUpdates),
 			ShouldPerformCompaction: false,
-		}, nil
+		}
 	} else if redisUpdates == nil {
-		return DBCombinedYUpdateRes{
+		res = DBCombinedYUpdateRes{
 			CombinedUpdate:          pgCombinedUpdateRes.CombinedUpdate,
 			ShouldPerformCompaction: pgCombinedUpdateRes.UpdatesCount > 100,
 			LastId:                  pgCombinedUpdateRes.LastId,
 			PGUpdatesCount:          pgCombinedUpdateRes.UpdatesCount,
-		}, nil
+		}
 	} else {
 		combinedUpdate := combineYUpdates(append([][]byte{pgCombinedUpdateRes.CombinedUpdate}, redisUpdates...))
-		return DBCombinedYUpdateRes{
+		res = DBCombinedYUpdateRes{
 			CombinedUpdate:          combinedUpdate,
 			ShouldPerformCompaction: pgCombinedUpdateRes.UpdatesCount > 100,
 			LastId:                  pgCombinedUpdateRes.LastId,
 			PGUpdatesCount:          pgCombinedUpdateRes.UpdatesCount,
-		}, nil
+		}
 	}
+
+	db.PG.Debug(fmt.Sprintf("GetCombinedYUpdate LastID: %s ShouldPerformCompaction: %t", res.LastId, res.ShouldPerformCompaction), res.CombinedUpdate)
+
+	return res, nil
 }
