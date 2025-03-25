@@ -127,7 +127,7 @@ Relevant env params (with default values) are:
 }
 ```
 
-### Simple Consistency test
+#### Simple Consistency test
 
 In this test, the following steps happen in sequence in a loop:
 
@@ -146,7 +146,7 @@ Relevant env params (with default values) are:
 }
 ```
 
-### Load Consistency test
+#### Load Consistency test
 
 This test tries to get to the limits of how consistent writes and reads are for a frequently updated document which is also frequently fetched. This is important for scenarios where new user can try to request a document which is being frequently updated by multiple other users and you need to ensure that they get the latest state.
 
