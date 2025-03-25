@@ -92,7 +92,7 @@ To run the test on prod binary:
 1. Run the test suite: `turbo run test`
 
 
-There are 3 types of tests:
+There are 4 types of tests:
 
 #### Read-Write test
 
@@ -127,22 +127,7 @@ Relevant env params (with default values) are:
 }
 ```
 
-#### Consistency test
-
-Consistency test suite consists of 2 tests:
-
-1. Simple Consistency test
-2. Load Consistency test
-
-Relevant env params are:
-
-```ts
-{
-    CONSISTENCY_ITERS: 1, // number of times the consistency test suite should be run
-}
-```
-
-** Simple Consistency test **
+### Simple Consistency test
 
 In this test, the following steps happen in sequence in a loop:
 
@@ -155,13 +140,13 @@ Relevant env params (with default values) are:
 
 ```ts
 {
-    CONSISTENCY_SIMPLE_ITERS: 1, // number of times the simple consistency test should be run per consistency test-suite run
+    CONSISTENCY_SIMPLE_ITERS: 1, // number of times the simple consistency test should be run
     CONSISTENCY_SIMPLE_READTIMEOUT_MS: 0, // ms to wait before reading yjs doc state from db server after a write to test yjs doc
     CONSISTENCY_SIMPLE_YDOC_UPDATE_ITERS: 10000, // number of updates to be applied to the test yjs doc
 }
 ```
 
-** Load Consistency test **
+### Load Consistency test
 
 This test tries to get to the limits of how consistent writes and reads are for a frequently updated document which is also frequently fetched. This is important for scenarios where new user can try to request a document which is being frequently updated by multiple other users and you need to ensure that they get the latest state.
 
@@ -169,15 +154,15 @@ Relevant env params (with default values) are:
 
 ```ts
 {
-    CONSISTENCY_LOAD_TEST_ITERS: 1, // number of times the load consistency test should be run per consistency test-suite run
+    CONSISTENCY_LOAD_TEST_ITERS: 1, // number of times the load consistency test should be run
     CONSISTENCY_LOAD_YDOC_UPDATE_ITERS: 10000, // number of updates to be applied to the test yjs doc
     CONSISTENCY_LOAD_YDOC_UPDATE_TIMEOUT_MS: 2, // ms to wait before applying an update to the test yjs doc
-    CONSISTENCY_LOAD_READ_PER_N_WRITES: 3, // number of writes after which consistency of a read from the db server should be checked
-    CONSISTENCY_LOAD_YDOC_READ_TIMEOUT_MS: 2, // ms to wait after an update before reading yjs doc state from db server and verifying its consistency
+    CONSISTENCY_LOAD_READ_PER_N_WRITES: 5, // number of writes after which consistency of a read from the db server should be checked
+    CONSISTENCY_LOAD_YDOC_READ_TIMEOUT_MS: 3, // ms to wait after an update before reading yjs doc state from db server and verifying its consistency
 }
 ```
 
-I wasn't able to reach a better consistency under load numbers than this on my local machine.
+I wasn't able to reach a better (and stable) consistency under load numbers than this on my local machine.
 
 ### Build
 

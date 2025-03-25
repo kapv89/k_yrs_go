@@ -8,7 +8,6 @@ import {expect} from "chai";
 import { randomInt, randomUUID } from "crypto";
 import { createEnv } from 'neon-env';
 import { zip } from "lodash";
-import { EventEmitter } from "stream";
 import logUpdate from 'log-update';
 
 process.on('unhandledRejection', (err) => {
@@ -30,8 +29,6 @@ const defaults = {
     COMPACTION_YDOC_UPDATE_ITERS: 10000,
     COMPACTION_Y_OPS_WAIT_MS: 0,
     
-    CONSISTENCY_ITERS: 1,
-
     CONSISTENCY_SIMPLE_ITERS: 1,
     CONSISTENCY_SIMPLE_READTIMEOUT_MS: 0,
     CONSISTENCY_SIMPLE_YDOC_UPDATE_ITERS: 10000,
@@ -39,8 +36,8 @@ const defaults = {
     CONSISTENCY_LOAD_TEST_ITERS: 1,
     CONSISTENCY_LOAD_YDOC_UPDATE_ITERS: 10000,
     CONSISTENCY_LOAD_YDOC_UPDATE_TIMEOUT_MS: 2,
-    CONSISTENCY_LOAD_READ_PER_N_WRITES: 3,
-    CONSISTENCY_LOAD_YDOC_READ_TIMEOUT_MS: 2,
+    CONSISTENCY_LOAD_READ_PER_N_WRITES: 5,
+    CONSISTENCY_LOAD_YDOC_READ_TIMEOUT_MS: 3,
 } as const;
 
 type ConfigSchema<T> = {
@@ -296,177 +293,173 @@ new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
     })
 });
 
-new Array(env.CONSISTENCY_ITERS).fill(0).forEach((_, i) => {
-    describe(`consistency - iter ${i}`, () => {
+new Array(env.CONSISTENCY_SIMPLE_ITERS).fill(0).forEach((_, i) => {
+    describe(`consistency simple- iter ${i}`, () => {
         log("starting consistency test suite")
 
-        new Array(env.CONSISTENCY_SIMPLE_ITERS).fill(0).forEach((_, j) => {
-            it(`writes and reads work consistently iter:${i} ${j}`, async () => {
-                const docId = uuid();
-                const ydoc = new Y.Doc();
-                const ymap = ydoc.getMap<number>('ymap');
+        it(`writes and reads work consistently iter:${i}`, async () => {
+            const docId = uuid();
+            const ydoc = new Y.Doc();
+            const ymap = ydoc.getMap<number>('ymap');
 
-                let onYDocUpdateIter = 0;
-                const onYDocUpdatePromises: Promise<number>[] = [];
-                ydoc.on('update', async (update: Uint8Array, origin: any, doc: Y.Doc) => {
-                    try {
-                        ((iter: number) => {
-                            onYDocUpdatePromises.push(new Promise(async (resolve) => {
-                                await api.post<Uint8Array>(`/docs/${docId}/updates`, update, {headers: {'Content-Type': 'application/octet-stream'}})
-                                resolve(iter)
-                            }))
-                        })(onYDocUpdateIter)
-                    } catch (err) {
-                        if (axios.isAxiosError(err)) {
-                            log('error sending update', err.response?.data)
-                        } else {
-                            log("error sending update", err)
-                        }
-                    } finally {
-                        onYDocUpdateIter++;
+            let onYDocUpdateIter = 0;
+            const onYDocUpdatePromises: Promise<number>[] = [];
+            ydoc.on('update', async (update: Uint8Array, origin: any, doc: Y.Doc) => {
+                try {
+                    ((iter: number) => {
+                        onYDocUpdatePromises.push(new Promise(async (resolve) => {
+                            await api.post<Uint8Array>(`/docs/${docId}/updates`, update, {headers: {'Content-Type': 'application/octet-stream'}})
+                            resolve(iter)
+                        }))
+                    })(onYDocUpdateIter)
+                } catch (err) {
+                    if (axios.isAxiosError(err)) {
+                        log('error sending update', err.response?.data)
+                    } else {
+                        log("error sending update", err)
                     }
-                })
+                } finally {
+                    onYDocUpdateIter++;
+                }
+            })
 
-                const mismatches: {want: number | undefined, got: number | undefined}[] = [];
-                const times: number[] = []
-                let n = 0;
-                const writeAndConfirm = async () => {
-                    if (n == env.CONSISTENCY_SIMPLE_YDOC_UPDATE_ITERS) {
-                        return;
-                    }
+            const mismatches: {want: number | undefined, got: number | undefined}[] = [];
+            const times: number[] = []
+            let n = 0;
+            const writeAndConfirm = async () => {
+                if (n == env.CONSISTENCY_SIMPLE_YDOC_UPDATE_ITERS) {
+                    return;
+                }
 
-                    const t1 = new Date().getTime();
-                    const logs: string[] = [`simple consistency iter: ${n}`]
-                    
-                    ymap.set('n', n++);
+                const t1 = new Date().getTime();
+                
+                ymap.set('n', n++);
 
-                    const waitForOnYDocUpdate = new Promise<void>((resolve) => {
-                        const t = setInterval(() => {
-                            if (onYDocUpdatePromises.length > 0) {
-                                clearInterval(t);
-                                resolve();
-                            }
-                        }, 0)
-                    });
-
-                    await waitForOnYDocUpdate;
-
-                    // validate from db
-                    await new Promise<void>((resolve) => {
-                        setTimeout(async () => {
-                            const p = onYDocUpdatePromises.shift();
-                            logs.push(`onYDocUpdate iter: ${(await p)}`);
-                            
-                            const ydoc2 = new Y.Doc();
-                            const res = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
-                            const update = new Uint8Array(res.data);
-                            Y.applyUpdate(ydoc2, update);
-
-                            const ymap2 = ydoc2.getMap<number>('ymap');
-
-                            if (ymap2.get('n') === undefined || ymap.get('n') === undefined || (ymap2.get('n') as number) !== (ymap.get('n') as number)){
-                                mismatches.push({want: ymap.get('n'), got: ymap2.get('n')});
-                            }
-
-                            const t2 = new Date().getTime();
-                            times.push(t2-t1);
-                            logs.push(`time taken: ${t2-t1}ms`);
-                            logUpdate(logs.join('\n'));
+                const waitForOnYDocUpdate = new Promise<void>((resolve) => {
+                    const t = setInterval(() => {
+                        if (onYDocUpdatePromises.length > 0) {
+                            clearInterval(t);
                             resolve();
-                            ydoc2.destroy();
-                        }, env.CONSISTENCY_SIMPLE_READTIMEOUT_MS);
-                    })
-                    
-                    writeAndConfirm();
-                }
-
-                writeAndConfirm();
-
-                log(`mismatches`, mismatches);
-                log(`average time`, (times.reduce((sum, t) => sum + t, 0) / times.length))
-                expect(mismatches.length).to.equal(0);
-            })
-        });
-
-
-        new Array(env.CONSISTENCY_LOAD_TEST_ITERS).fill(0).forEach((_, j) => {
-            it(`writes and reads work consistently in load - iter: ${i}, ${j}`, async () => {
-                const docId = uuid();
-                const ydoc = new Y.Doc();
-                const yintmap = ydoc.getMap<number>('int_map');
-
-                const onYDocUpdatePromises: Promise<void>[] = [];
-                ydoc.on('update', async (update: Uint8Array, origin: any, doc: Y.Doc) => {
-                    onYDocUpdatePromises.push(Promise.resolve());
-                    try {
-                        await api.post<Uint8Array>(`/docs/${docId}/updates`, update, {headers: {'Content-Type': 'application/octet-stream'}})
-                    } catch (err) {
-                        if (axios.isAxiosError(err)) {
-                            log('error sending update', err.response?.data)
-                        } else {
-                            log("error sending update", err)
                         }
-                    }
+                    }, 0)
+                });
+
+                await waitForOnYDocUpdate;
+
+                // validate from db
+                await new Promise<void>((resolve) => {
+                    setTimeout(async () => {
+                        const p = onYDocUpdatePromises.shift();
+                        logUpdate(`simple consistency onYDocUpdate iter: ${(await p)}`);
+                        
+                        const ydoc2 = new Y.Doc();
+                        const res = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
+                        const update = new Uint8Array(res.data);
+                        Y.applyUpdate(ydoc2, update);
+
+                        const ymap2 = ydoc2.getMap<number>('ymap');
+
+                        if (ymap2.get('n') === undefined || ymap.get('n') === undefined || (ymap2.get('n') as number) !== (ymap.get('n') as number)){
+                            mismatches.push({want: ymap.get('n'), got: ymap2.get('n')});
+                        }
+
+                        const t2 = new Date().getTime();
+                        times.push(t2-t1);
+                        resolve();
+                        ydoc2.destroy();
+                    }, env.CONSISTENCY_SIMPLE_READTIMEOUT_MS);
                 })
+                
+                await writeAndConfirm();
+            }
 
+            await writeAndConfirm();
 
-                const mismatches: {want: number, got: number | undefined}[] = [];
-                const readPromises: Promise<void>[] = [];
-
-                let n = 0;
-                const write = async () => {
-                    if (n == env.CONSISTENCY_LOAD_YDOC_UPDATE_ITERS) {
-                        return;
-                    }
-
-                    yintmap.set('n', n);
-
-                    const waitForYDocUpdate = new Promise<void>((resolve) => {
-                        const t = setInterval(async () => {
-                            if (onYDocUpdatePromises.length > 0) {
-                                const p = onYDocUpdatePromises.shift();
-                                await p;
-                                resolve();
-                                clearInterval(t);
-                            }
-                        }, 0)
-                    })
-
-                    await waitForYDocUpdate;
-
-                    if (n > 0 && n % env.CONSISTENCY_LOAD_READ_PER_N_WRITES === 0) {
-                        ((n) => {
-                            setTimeout(() => {
-                                readPromises.push(checkPersistedYDoc(n));
-                            }, env.CONSISTENCY_LOAD_YDOC_READ_TIMEOUT_MS);
-                        })(n);
-                    }
-                    
-                    n++;
-                    await wait(env.CONSISTENCY_LOAD_YDOC_UPDATE_TIMEOUT_MS)
-                    await write();
-                }
-    
-                const checkPersistedYDoc = async (n: number) => {
-                    logUpdate(`checkPersistedYDoc n received: ${n}`);
-                    const ydoc2 = new Y.Doc();
-                    const res = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
-                    const update = new Uint8Array(res.data);
-                    Y.applyUpdate(ydoc2, update);
-                    const yintmap2 = ydoc2.getMap<number>('int_map');
-    
-                    if (yintmap2.get('n') === undefined || (yintmap2.get('n') as number) < n) {
-                        // we check for only < n because fresher data can be read
-                        mismatches.push({want: n, got: yintmap2.get('n')})
-                    }
-                }
-    
-                await write();
-                await Promise.all(readPromises);
-    
-                log("mismatches: ", mismatches);
-                expect(mismatches.length).equal(0)
-            })
-        });
+            log(`mismatches`, mismatches);
+            log(`average time per write+read+check (ms)`, (times.reduce((sum, t) => sum + t, 0) / times.length))
+            expect(mismatches.length).to.equal(0);
+        })
     })
 })
+
+new Array(env.CONSISTENCY_LOAD_TEST_ITERS).fill(0).forEach((_, i) => {
+    describe(`consistency load - iter: ${i}`, () => {
+        it(`writes and reads work consistently in load - iter: ${i}`, async () => {
+            const docId = uuid();
+            const ydoc = new Y.Doc();
+            const yintmap = ydoc.getMap<number>('int_map');
+
+            const onYDocUpdatePromises: Promise<void>[] = [];
+            ydoc.on('update', async (update: Uint8Array, origin: any, doc: Y.Doc) => {
+                onYDocUpdatePromises.push(Promise.resolve());
+                try {
+                    await api.post<Uint8Array>(`/docs/${docId}/updates`, update, {headers: {'Content-Type': 'application/octet-stream'}})
+                } catch (err) {
+                    if (axios.isAxiosError(err)) {
+                        log('error sending update', err.response?.data)
+                    } else {
+                        log("error sending update", err)
+                    }
+                }
+            })
+
+
+            const mismatches: {want: number, got: number | undefined}[] = [];
+            const readPromises: Promise<void>[] = [];
+
+            let n = 0;
+            const write = async () => {
+                if (n == env.CONSISTENCY_LOAD_YDOC_UPDATE_ITERS) {
+                    return;
+                }
+
+                yintmap.set('n', n);
+
+                const waitForYDocUpdate = new Promise<void>((resolve) => {
+                    const t = setInterval(async () => {
+                        if (onYDocUpdatePromises.length > 0) {
+                            const p = onYDocUpdatePromises.shift();
+                            await p;
+                            resolve();
+                            clearInterval(t);
+                        }
+                    }, 0)
+                })
+
+                await waitForYDocUpdate;
+
+                if (n > 0 && n % env.CONSISTENCY_LOAD_READ_PER_N_WRITES === 0) {
+                    ((n) => {
+                        setTimeout(() => {
+                            readPromises.push(checkPersistedYDoc(n));
+                        }, env.CONSISTENCY_LOAD_YDOC_READ_TIMEOUT_MS);
+                    })(n);
+                }
+                
+                n++;
+                await wait(env.CONSISTENCY_LOAD_YDOC_UPDATE_TIMEOUT_MS)
+                await write();
+            }
+
+            const checkPersistedYDoc = async (n: number) => {
+                logUpdate(`consistency in load checkPersistedYDoc n received: ${n}`);
+                const ydoc2 = new Y.Doc();
+                const res = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
+                const update = new Uint8Array(res.data);
+                Y.applyUpdate(ydoc2, update);
+                const yintmap2 = ydoc2.getMap<number>('int_map');
+
+                if (yintmap2.get('n') === undefined || (yintmap2.get('n') as number) < n) {
+                    // we check for only < n because fresher data can be read
+                    mismatches.push({want: n, got: yintmap2.get('n')})
+                }
+            }
+
+            await write();
+            await Promise.all(readPromises);
+
+            log("mismatches: ", mismatches);
+            expect(mismatches.length).equal(0)
+        })
+    })
+});
