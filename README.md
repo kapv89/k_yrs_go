@@ -14,9 +14,11 @@ CREATE INDEX IF NOT EXISTS k_yrs_go_yupdates_store_doc_id_idx ON k_yrs_go_yupdat
 ```
 
 Rows in `k_yrs_go_yupdates_store` undergo compaction when fetching the state for a document if the number of
-rows of updates for the `doc_id` are > 100 in count.
+rows of updates for the `doc_id` are > 100 in count. Compaction happens in a serializable transaction, and the
+combined-yupdate is inserted in the table only when the number of deleted yupdates is equal to what was fetched
+from the db.
 
-Usage:
+## Usage:
 
 ```ts
 import axios from 'axios';
@@ -246,7 +248,7 @@ turbo run test
 
 ### Build
 
-If you are running the dev setup, stop it. It's gonna be useless after `build` runs.
+If you are running the dev setup, stop it. It's gonna be useless after `build` runs because the C ffi files will get refreshed.
 
 ```bash
 turbo run build
