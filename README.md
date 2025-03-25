@@ -91,6 +91,37 @@ To run the test on prod binary:
 1. Run the production binary on dev infra: `turbo run server`
 1. Run the test suite: `turbo run test`
 
+If you want to supply custom env-params to tests:
+
+1. First start the dev infra: `turbo run dev#dev`
+1. Run the production binary on dev infra: `turbo run server`
+1. `cd test`
+1. Supply env-params and run the `npm run test` command. Example: `RW_ITERS=3 COMPACTION_ITERS=0 CONSISTENCY_SIMPLE_ITERS=0 CONSISTENCY_LOAD_TEST_ITERS=0 npm run test`
+
+Available env params to tweak tests are (with default values):
+
+```
+{
+    RW_ITERS: 1,
+    RW_Y_OPS_WAIT_MS: 0,
+    
+    COMPACTION_ITERS: 1,
+    COMPACTION_YDOC_UPDATE_INTERVAL_MS: 0,
+    COMPACTION_YDOC_UPDATE_ITERS: 10000,
+    COMPACTION_Y_OPS_WAIT_MS: 0,
+    
+    CONSISTENCY_SIMPLE_ITERS: 1,
+    CONSISTENCY_SIMPLE_READTIMEOUT_MS: 0,
+    CONSISTENCY_SIMPLE_YDOC_UPDATE_ITERS: 10000,
+
+    CONSISTENCY_LOAD_TEST_ITERS: 1,
+    CONSISTENCY_LOAD_YDOC_UPDATE_ITERS: 10000,
+    CONSISTENCY_LOAD_YDOC_UPDATE_TIMEOUT_MS: 2,
+    CONSISTENCY_LOAD_READ_PER_N_WRITES: 5,
+    CONSISTENCY_LOAD_YDOC_READ_TIMEOUT_MS: 3,
+}
+```
+
 
 There are 4 types of tests:
 
