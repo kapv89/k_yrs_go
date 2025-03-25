@@ -1,4 +1,4 @@
-# k_yrs_go - Golang database for YJS CRDT using postgres + redis
+# k_yrs_go - Golang database for YJS CRDT using Postgres + Redis
 
 `k_yrs_go` is a database server for [YJS](https://docs.yjs.dev/) documents. It works on top of [Postgres](http://postgresql.org/) and [Redis](https://redis.io/).
 `k_yrs_go` uses binary redis queues as I/O buffers for YJS document updates, and uses the following PG table to store the updates:
