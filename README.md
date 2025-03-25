@@ -20,7 +20,7 @@ from the db.
 
 Even the Reads and Writes happen in serializable transactions. From what all I have read about databases, Reads, Writes, and Compactions in `k_yrs_go` should be consistent with each other.
 
-Max document size supported is [1 GB](https://www.postgresql.org/docs/7.4/jdbc-binary-data.html#:~:text=The%20bytea%20data%20type%20is,process%20such%20a%20large%20value.)
+Max document size supported is [1 GB](https://www.postgresql.org/docs/7.4/jdbc-binary-data.html#:~:text=The%20bytea%20data%20type%20is,process%20such%20a%20large%20value.).
 
 ## Usage:
 
