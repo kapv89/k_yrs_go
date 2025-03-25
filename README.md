@@ -144,7 +144,7 @@ Compaction test writes a large number of updates to a yjs doc, the performs the 
     after the writes.
 1. Fetches the yjs update for `doc_id`, loads them in another yjs doc and checks
     that this new yjs doc is consistent with the original yjs doc.
-1. Checks that the number of rows in `k_yrs_go_yupdates_store` table for the test `doc_id` are <= 100
+1. Checks that the number of rows in `k_yrs_go_yupdates_store` table for the test `doc_id` are <= 100 (compaction has happened).
 1. Fetches the yjs updates for `doc_id` again (this is after compaction) and verifies that the update is same as the previously fetched update.
 
 Relevant env params (with default values) are:
