@@ -6,7 +6,7 @@
   "scripts": {
     "test": "dotenv -- tsx --test test.ts",
     "test:compaction:stability": "RW_ITERS=0 CONSISTENCY_ITERS=0 COMPACTION_ITERS=100 dotenv -- tsx --test test.ts",
-    "test:consistency": "RW_ITERS=0 COMPACTION_ITERS=0 CONSISTENCY_ITERS=1 CONSISTENCY_LOAD_TEST_ITERS=0 CONSISTENCY_SIMPLE_ITERS=80 CONSISTENCY_SIMPLE_READTIMEOUT_MS=100 dotenv -- tsx --test test.ts"
+    "test:consistency": "RW_ITERS=0 COMPACTION_ITERS=0 CONSISTENCY_ITERS=1 CONSISTENCY_LOAD_TEST_ITERS=0 CONSISTENCY_SIMPLE_ITERS=10000 CONSISTENCY_SIMPLE_READTIMEOUT_MS=0 dotenv -- tsx --test test.ts"
   },
   "author": "",
   "license": "ISC",

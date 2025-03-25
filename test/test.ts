@@ -327,8 +327,13 @@ new Array(env.CONSISTENCY_ITERS).fill(0).forEach((_, i) => {
             const times: number[] = []
             let n = 0;
             const writeAndConfirm = async () => {
+                if (n == env.CONSISTENCY_SIMPLE_ITERS) {
+                    return;
+                }
+
                 const t1 = new Date().getTime();
                 const logs: string[] = [`simple consistency iter: ${n}`]
+                
                 ymap.set('n', n++);
 
                 const waitForOnYDocUpdate = new Promise<void>((resolve) => {
@@ -363,21 +368,14 @@ new Array(env.CONSISTENCY_ITERS).fill(0).forEach((_, i) => {
                         logs.push(`time taken: ${t2-t1}ms`);
                         logUpdate(logs.join('\n'));
                         resolve();
-                    }, env.CONSISTENCY_SIMPLE_READTIMEOUT_MS)
+                    }, env.CONSISTENCY_SIMPLE_READTIMEOUT_MS);
                 })
+                
+                writeAndConfirm();
             }
 
-            const p = new Promise<void>((resolve) => {
-                const t = setInterval(() => {
-                    writeAndConfirm();
-                    if (n === env.CONSISTENCY_SIMPLE_ITERS) {
-                        clearInterval(t);
-                        resolve();
-                    }
-                }, 0);
-            })
+            writeAndConfirm();
 
-            await p;
             log(`mismatches`, mismatches);
             log(`average time`, (times.reduce((sum, t) => sum + t, 0) / times.length))
             expect(mismatches.length).to.equal(0);
