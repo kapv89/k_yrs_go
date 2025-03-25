@@ -7,6 +7,7 @@ import knex from 'knex';
 import {expect} from "chai";
 import { randomInt, randomUUID } from "crypto";
 import { createEnv } from 'neon-env';
+import { zip } from "lodash";
 
 const log = (key: string, value?: any) => typeof value !== "undefined" ? console.log(`======> ${key}`, value) : console.log(`======> ${key}:`);
 
@@ -17,7 +18,7 @@ const defaults = {
     RW_Y_OPS_WAIT_MS: 0,
     COMPACTION_ITERS: 1,
     COMPACTION_YDOC_UPDATE_INTERVAL_MS: 0,
-    COMPACTION_YDOC_UPDATE_ITERS: 1100,
+    COMPACTION_YDOC_UPDATE_ITERS: 10000,
     COMPACTION_Y_OPS_WAIT_MS: 0
 } as const;
 
@@ -257,10 +258,9 @@ new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
             const response2 = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
             const update2 = new Uint8Array(response2.data);
 
-            const str1 = String.fromCharCode(...update);
-            const str2 = String.fromCharCode(...update2);
-
-            expect(str1).equal(str2);
+            zip(update, update2).forEach(([u1, u2]) => {
+                expect(u1).to.equal(u2)
+            })
         })
 
         after(() => {
