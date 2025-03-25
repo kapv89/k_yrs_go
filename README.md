@@ -309,6 +309,8 @@ PG_URL=postgres://dev:dev@localhost:5432/k_yrs_dev?sslmode=disable
 
 REDIS_URL=redis://localhost:6379
 
+DEBUG=true
+
 REDIS_QUEUE_MAX_SIZE=1000
 ```
 
