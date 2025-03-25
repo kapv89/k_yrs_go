@@ -309,8 +309,6 @@ func (p *PGDB) GetCombinedYUpdate(ctx context.Context, docID string) (PGCombined
 }
 
 func (p *PGDB) PerformCompaction(ctx context.Context, docID string, lastID string, combinedUpdate []byte, pgUpdatesCount int) error {
-	p.Debug(fmt.Sprintf("compacting %s", lastID), combinedUpdate)
-
 	// Begin a transaction with a serializable isolation level
 	tx, err := p.client.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelSerializable,
@@ -466,8 +464,6 @@ func (db *DB) GetCombinedYUpdate(ctx context.Context, docID string) (DBCombinedY
 			PGUpdatesCount:          pgCombinedUpdateRes.UpdatesCount,
 		}
 	}
-
-	db.PG.Debug(fmt.Sprintf("GetCombinedYUpdate LastID: %s ShouldPerformCompaction: %t", res.LastId, res.ShouldPerformCompaction), res.CombinedUpdate)
 
 	return res, nil
 }

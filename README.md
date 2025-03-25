@@ -1,4 +1,3 @@
-# UNDER HEAVY DEVELOPMENT -- working on consistency under load
 # k_yrs_go - Golang database for YJS CRDT using postgres + redis
 
 `k_yrs_go` is a database server for [YJS](https://docs.yjs.dev/) documents. It works on top of [Postgres](http://postgresql.org/) and [Redis](https://redis.io/).
@@ -18,6 +17,8 @@ Rows in `k_yrs_go_yupdates_store` undergo compaction when fetching the state for
 rows of updates for the `doc_id` are > 100 in count. Compaction happens in a serializable transaction, and the
 combined-yupdate is inserted in the table only when the number of deleted yupdates is equal to what was fetched
 from the db.
+
+Even the Reads and Writes happen in serializable transactions. From what all I have read about databases, Reads, Writes, and Compactions in `k_yrs_go` should be consistent with each other.
 
 ## Usage:
 
@@ -40,173 +41,6 @@ const update = new Uint8Array(response.data);
 const ydoc2 = new Y.Doc();
 Y.applyUpdate(ydoc2, update);
 
-```
-
-## 1ms +- x write latencies!
-
-[**latencies.png**](latencies.png) & [**system_config.png**](system_config.png)
-
-Seems to be very fast on my system.
-
-The following test (keep track of the `env.*` variables) runs successfully with the default config for me::
-
-```ts
-import { createEnv } from 'neon-env';
-
-const defaults = {
-    SERVER_URL: 'http://localhost:3000',
-    PG_URL: 'postgres://dev:dev@localhost:5432/k_yrs_dev?sslmode=disable',
-    REDIS_URL: 'redis://localhost:6379',
-    RW_Y_OPS_WAIT_MS: 0,
-    COMPACTION_ITERS: 1,
-    COMPACTION_YDOC_UPDATE_INTERVAL_MS: 0,
-    COMPACTION_YDOC_UPDATE_ITERS: 10000,
-    COMPACTION_Y_OPS_WAIT_MS: 0
-} as const;
-
-type ConfigSchema<T> = {
-    [K in keyof T]: {
-      type: T[K] extends number ? 'number' : T[K] extends string ? 'string' : never;
-      default: T[K];
-    };
-};
-
-function createEnvSchema<T extends object>(obj: T): ConfigSchema<T> {
-    return Object.keys(obj).reduce((acc, key) => {
-      // Cast key to keyof T for proper type inference
-      const typedKey = key as keyof T;
-      const value = obj[typedKey];
-      let type: 'number' | 'string';
-      if (typeof value === 'string') {
-        type = 'string';
-      } else if (typeof value === 'number') {
-        type = 'number';
-      } else {
-        throw new Error(`Unsupported type for key ${key}`);
-      }
-      return {
-        ...acc,
-        [typedKey]: { type, default: value },
-      };
-    }, {} as ConfigSchema<T>);
-  }
-
-
-const env = createEnv(createEnvSchema(defaults));
-
-new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
-    describe(`compaction iter ${i}`, () => {
-        const docId = uuid();
-        const ydoc = new Y.Doc();
-
-        log("starting compaction test suite")
-
-        before(() => {
-            ydoc.on('update', async (update: Uint8Array, origin: any, doc: Y.Doc) => {
-                try {
-                    await api.post<Uint8Array>(`/docs/${docId}/updates`, update, {headers: {'Content-Type': 'application/octet-stream'}})
-                } catch (err) {
-                    if (axios.isAxiosError(err)) {
-                        log('error sending update', err.response?.data)
-                    } else {
-                        log("error sending update", err)
-                    }
-                }
-            })
-        });
-
-        it(`performs compaction in db: iter ${i}`, async () => {    
-            const yintlist = ydoc.getArray<number>('int_list');
-            const ystrlist = ydoc.getArray<string>('str_list');
-
-            const p = new Promise<void>((resolve) => {
-                let iter = 0;
-                const t = setInterval(() => {
-                    log("ydoc update iter", iter)
-                    iter++;
-        
-                    ydoc.transact(() => {
-                        yintlist.insert(yintlist.length, [randomInt(10 ** 6), randomInt(10 ** 6)])
-                        ystrlist.insert(ystrlist.length, [randomUUID().toString(), randomUUID().toString()])  
-                    })
-            
-                    if (iter === env.COMPACTION_YDOC_UPDATE_ITERS) {
-                        clearInterval(t);
-                        resolve();
-                    }
-                }, env.COMPACTION_YDOC_UPDATE_INTERVAL_MS);
-            });
-
-            await p;
-        
-            await wait(env.COMPACTION_Y_OPS_WAIT_MS);
-
-            let countRes = await db('k_yrs_go_yupdates_store').where('doc_id', docId).count('id');
-            let rowsInDB = Number(countRes[0].count)
-
-            const response = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
-            const update = new Uint8Array(response.data);
-            const ydoc2 = new Y.Doc();
-            Y.applyUpdate(ydoc2, update);
-
-            await wait(env.COMPACTION_Y_OPS_WAIT_MS);
-            
-            const yintlist2 = ydoc2.getArray<number>('int_list');
-            const ystrlist2 = ydoc2.getArray<string>('str_list');
-
-            type Diff = {
-                index: number,
-                expected: string | number,
-                actual: string | number
-            }
-
-            const intlistdiffs: Diff[] = []
-            for (let i=0; i < yintlist.length; i++) {
-                const expected = yintlist.get(i);
-                const actual = yintlist2.get(i);
-
-                if (expected !== actual) {
-                    intlistdiffs.push({index: i, expected, actual});
-                }
-            }
-
-            const strlistdiffs: Diff[] = []
-            for (let i=0; i < ystrlist.length; i++) {
-                const expected = ystrlist.get(i);
-                const actual = ystrlist2.get(i);
-
-                if (expected !== actual) {
-                    strlistdiffs.push({index: i, expected, actual});
-                }
-            }
-
-            log('intlistdiffs', intlistdiffs);
-            log('strlistdiffs', strlistdiffs);
-
-            expect(intlistdiffs.length).to.equal(0);
-            expect(strlistdiffs.length).to.equal(0);
-
-            await wait(env.COMPACTION_Y_OPS_WAIT_MS);
-
-            countRes = await db('k_yrs_go_yupdates_store').where('doc_id', docId).count('id')
-            rowsInDB = Number(countRes[0].count);
-
-            expect(rowsInDB).to.lessThanOrEqual(100);
-
-            const response2 = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
-            const update2 = new Uint8Array(response2.data);
-
-            const str1 = String.fromCharCode(...update);
-            const str2 = String.fromCharCode(...update2);
-
-            expect(str1).equal(str2);
-        })
-
-        after(() => {
-            ydoc.destroy();
-        })
-    })
-});
 ```
 
 ### Clone
@@ -235,17 +69,113 @@ turbo run dev
 
 ### Run test
 
-Make sure you are running locally:
-
-```bash
-turbo run dev
-```
-
-Then run tests:
-
 ```bash
 turbo run test
 ```
+
+## 1ms +- x write latencies!
+
+[**latencies.png**](latencies.png) & [**system_config.png**](system_config.png)
+
+Seems to be very fast on my system.
+
+### Testing
+
+Tests are written in typescript with actual YJS docs. They can be found in [`test/test.ts`](test/test.ts).
+
+To run the test on prod binary:
+
+1. First start the dev infra: `turbo run dev#dev`
+1. Run the production binary on dev infra: `turbo run server`
+1. Run the test suite: `turbo run test`
+
+
+There are 3 types of tests:
+
+#### Read-Write test
+
+Read-Write test tests for persistence of 2 operations on a simple list, and ensures that reading them back is consistent. Relevant env params (with default values) are:
+
+```ts
+{
+    RW_ITERS: 1, // number of times the read-write test suite should be run
+    RW_Y_OPS_WAIT_MS: 0, // ms of wait between (rw) operations on yjs docs
+}
+```
+
+#### Compaction test
+
+Compaction test writes a large number of updates to a yjs doc, the performs the following checks:
+
+1. Checks that the number of rows in the `k_yrs_go_yupdates_store` table for the test `doc_id` are > 100
+    after the writes.
+1. Fetches the yjs update for `doc_id`, loads them in another yjs doc and checks
+    that this new yjs doc is consistent with the original yjs doc.
+1. Checks that the number of rows in `k_yrs_go_yupdates_store` table for the test `doc_id` are <= 100
+1. Fetches the yjs updates for `doc_id` again (this is after compaction) and verifies that the update is same as the previously fetched update.
+
+Relevant env params (with default values) are:
+
+```ts
+{
+    COMPACTION_ITERS: 1, // number of times the compaction test-suite should be run
+    COMPACTION_YDOC_UPDATE_INTERVAL_MS: 0, // ms of wait between performing 2 update operations to the test yjs doc
+    COMPACTION_YDOC_UPDATE_ITERS: 10000, // number of updates to be performed on the test yjs doc
+    COMPACTION_Y_OPS_WAIT_MS: 0, // ms of wait between different compaction stages
+}
+```
+
+#### Consistency test
+
+Consistency test suite consists of 2 tests:
+
+1. Simple Consistency test
+2. Load Consistency test
+
+Relevant env params are:
+
+```ts
+{
+    CONSISTENCY_ITERS: 1, // number of times the consistency test suite should be run
+}
+```
+
+** Simple Consistency test **
+
+In this test, the following steps happen in sequence in a loop:
+
+1. An update is written to test yjs doc, and gets persisted to the db server
+1. State of doc is read back from the db server, and applied to a new yjs doc
+1. The new yjs doc is compared to be consistent with the test yjs doc
+1. Go back to #1
+
+Relevant env params (with default values) are:
+
+```ts
+{
+    CONSISTENCY_SIMPLE_ITERS: 1, // number of times the simple consistency test should be run per consistency test-suite run
+    CONSISTENCY_SIMPLE_READTIMEOUT_MS: 0, // ms to wait before reading yjs doc state from db server after a write to test yjs doc
+    CONSISTENCY_SIMPLE_YDOC_UPDATE_ITERS: 10000, // number of updates to be applied to the test yjs doc
+}
+```
+
+** Load Consistency test **
+
+This test tries to get to the limits of how consistent writes and reads are for a frequently updated document which is also frequently fetched. This is important for scenarios where new user can try to request a document which is being frequently updated by multiple other users and you need to ensure that they get the latest state.
+
+Relevant env params (with default values) are:
+
+```ts
+{
+    CONSISTENCY_LOAD_TEST_ITERS: 1, // number of times the load consistency test should be run per consistency test-suite run
+    CONSISTENCY_LOAD_YDOC_UPDATE_ITERS: 10000, // number of updates to be applied to the test yjs doc
+    CONSISTENCY_LOAD_YDOC_UPDATE_TIMEOUT_MS: 2, // ms to wait before applying an update to the test yjs doc
+    CONSISTENCY_LOAD_READ_PER_N_WRITES: 3, // number of writes after which consistency of a read from the db server should be checked
+    CONSISTENCY_LOAD_YDOC_READ_TIMEOUT_MS: 2, // ms to wait after an update before reading yjs doc state from db server and verifying its consistency
+}
+```
+
+I wasn't able to reach a better consistency under load numbers than this on my local machine.
 
 ### Build
 
@@ -255,7 +185,7 @@ If you are running the dev setup, stop it. It's gonna be useless after `build` r
 turbo run build
 ```
 
-Server binary will be available as `k_yrs_go/server/server`. You can deploy this server binary in a horizontally scalable manner
+Server binary will be available at `server/server`. You can deploy this server binary in a horizontally scalable manner
 like a normal API server over a Postgres DB and a Redis DB and things will work correctly.
 
 #### Run prod binary
