@@ -21,8 +21,6 @@ const defaults = {
     COMPACTION_Y_OPS_WAIT_MS: 0
 } as const;
 
-type Defaults = typeof defaults;
-
 type ConfigSchema<T> = {
     [K in keyof T]: {
       type: T[K] extends number ? 'number' : T[K] extends string ? 'string' : never;
