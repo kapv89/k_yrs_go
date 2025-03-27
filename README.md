@@ -142,7 +142,7 @@ Compaction test writes a large number of updates to a yjs doc, the performs the 
 
 1. Checks that the number of rows in the `k_yrs_go_yupdates_store` table for the test `doc_id` are > 100
     after the writes.
-1. Fetches 2 yjs updates for `doc_id` **within the same millisecond**, loads them in 2 other
+1. Fetches 2 yjs updates for `doc_id` **within the same millisecond** (while compaction is happening), loads them in 2 other
     yjs docs and checks that this new yjs doc is consistent with the original yjs doc and that both responses within the same millisecond are consistent with each other.
 1. Checks that the number of rows in `k_yrs_go_yupdates_store` table for the test `doc_id` are <= 100 (compaction has happened).
 
