@@ -1,7 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import { v4 as uuid } from "uuid";
 import * as Y from 'yjs';
-import axios from 'axios';
+import axios, { AxiosResponse } from 'axios';
 import Redis from 'ioredis';
 import knex from 'knex';
 import {expect} from "chai";
@@ -230,7 +230,20 @@ new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
 
             expect(rowsInDB).to.greaterThan(100);
 
-            const response = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
+            const [response, response2] = await new Promise<[AxiosResponse<ArrayBuffer, any>, AxiosResponse<ArrayBuffer, any>]>(async (resolve) => {
+                const t1 = new Date().getTime()
+                const promises = [
+                    api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' }),
+                    api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' })
+                ] as const;
+                const t2 = new Date().getTime();
+
+                log('compaction: diff between the 2 GET `/docs{$docId}/updates calls (ms)', t2-t1);
+                
+                resolve(await Promise.all(promises))
+            });
+
+            // const response = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
             const update = new Uint8Array(response.data);
             const ydoc2 = new Y.Doc();
             Y.applyUpdate(ydoc2, update);
@@ -279,7 +292,7 @@ new Array(env.COMPACTION_ITERS).fill(0).forEach((_, i) => {
 
             expect(rowsInDB).to.lessThanOrEqual(100);
 
-            const response2 = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
+            // const response2 = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
             const update2 = new Uint8Array(response2.data);
 
             zip(update, update2).forEach(([u1, u2]) => {
