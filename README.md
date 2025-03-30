@@ -20,7 +20,7 @@ from the db.
 
 Even the Reads and Writes happen in serializable transactions. From what all I have read about databases, Reads, Writes, and Compactions in `k_yrs_go` should be consistent with each other.
 
-Max document size supported is [1 GB](https://www.postgresql.org/docs/7.4/jdbc-binary-data.html#:~:text=The%20bytea%20data%20type%20is,process%20such%20a%20large%20value.).
+Max document size supported is [1 GB](https://www.postgresql.org/docs/7.4/jdbc-binary-data.html#:~:text=The%20bytea%20data%20type%20is,process%20such%20a%20large%20value.). The test suite contains a `'large doc'` test which tests persistence for 100MB docs.
 
 ## Usage:
 
@@ -123,7 +123,7 @@ Available env params to tweak tests are (with default values):
 ```
 
 
-There are 4 types of tests:
+There are 5 types of tests:
 
 #### Read-Write test
 
@@ -193,6 +193,24 @@ Relevant env params (with default values) are:
 ```
 
 I wasn't able to reach a better (and stable) consistency under load numbers than this on my local machine.
+
+#### Large Doc test
+
+1. This tests writes data to the test yjs doc till it becomes 100MB in size, all the while persisting updates to server.
+2. Then it reads the data back from server twice - once before compaction, and once after compaction, and creates 2 new yjs docs.
+3. The 3 yjs docs are compared to be consistent with each other.
+
+Relevant env params (with default values) are:
+
+```ts
+{
+    LARGE_DOC_TEST_ITERS: 1, // number of times the large doc test should be run
+    LARGE_DOC_MAX_DOC_SIZE_MB: 100, // max size of test yjs doc. the test doc will be written to till it reaches this size
+    LARGE_DOC_CHECK_DOC_SIZE_PER_ITER: 10000, // checking yjs doc size becomes an expensive operation quickly as it grows more than 10MB, hence it is checked per these many iters
+    LARGE_DOC_YDOC_WRITE_INTERVAL_MS: 0, // interval between 2 write operations to the test yjs doc
+    LARGE_DOC_YDOC_READ_TIMEOUT_MS: 0 // time to wait before reading yjs doc back after all write requests have completed
+}
+```
 
 ### Build
 

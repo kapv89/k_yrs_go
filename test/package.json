@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "test": "dotenv -- tsx --test test.ts",
-    "test:compaction:stability": "RW_ITERS=0 CONSISTENCY_ITERS=0 COMPACTION_ITERS=100 dotenv -- tsx --test test.ts",
-    "test:consistency": "RW_ITERS=0 COMPACTION_ITERS=0 CONSISTENCY_ITERS=1 CONSISTENCY_LOAD_TEST_ITERS=10 CONSISTENCY_SIMPLE_ITERS=0 dotenv -- tsx --test test.ts"
+    "test:compaction:stability": "RW_ITERS=0 CONSISTENCY_LOAD_TEST_ITERS=0 CONSISTENCY_SIMPLE_ITERS=0 LARGE_DOC_TEST_ITERS=0 COMPACTION_ITERS=100 dotenv -- tsx --test test.ts",
+    "test:consistency": "RW_ITERS=0 COMPACTION_ITERS=0 CONSISTENCY_LOAD_TEST_ITERS=10 CONSISTENCY_SIMPLE_ITERS=0 LARGE_DOC_TEST_ITERS=0 dotenv -- tsx --test test.ts",
+    "test:large_doc": "NODE_OPTIONS=\"--max-old-space-size=8192\" RW_ITERS=0 COMPACTION_ITERS=0 CONSISTENCY_LOAD_TEST_ITERS=0 CONSISTENCY_SIMPLE_ITERS=0 LARGE_DOC_TEST_ITERS=1 dotenv -- tsx --test test.ts"
   },
   "author": "",
   "license": "ISC",

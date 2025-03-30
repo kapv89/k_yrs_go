@@ -30,7 +30,7 @@ const defaults = {
     COMPACTION_Y_OPS_WAIT_MS: 0,
     
     CONSISTENCY_SIMPLE_ITERS: 1,
-    CONSISTENCY_SIMPLE_READTIMEOUT_MS: 0,
+    CONSISTENCY_SIMPLE_READ_TIMEOUT_MS: 0,
     CONSISTENCY_SIMPLE_YDOC_UPDATE_ITERS: 10000,
 
     CONSISTENCY_LOAD_TEST_ITERS: 1,
@@ -38,6 +38,12 @@ const defaults = {
     CONSISTENCY_LOAD_YDOC_UPDATE_TIMEOUT_MS: 2,
     CONSISTENCY_LOAD_READ_PER_N_WRITES: 5,
     CONSISTENCY_LOAD_YDOC_READ_TIMEOUT_MS: 3,
+
+    LARGE_DOC_TEST_ITERS: 1,
+    LARGE_DOC_MAX_DOC_SIZE_MB: 100,
+    LARGE_DOC_CHECK_DOC_SIZE_PER_ITER: 10000,
+    LARGE_DOC_YDOC_WRITE_INTERVAL_MS: 0,
+    LARGE_DOC_YDOC_READ_TIMEOUT_MS: 0
 } as const;
 
 type ConfigSchema<T> = {
@@ -380,7 +386,7 @@ new Array(env.CONSISTENCY_SIMPLE_ITERS).fill(0).forEach((_, i) => {
                         times.push(t2-t1);
                         resolve();
                         ydoc2.destroy();
-                    }, env.CONSISTENCY_SIMPLE_READTIMEOUT_MS);
+                    }, env.CONSISTENCY_SIMPLE_READ_TIMEOUT_MS);
                 })
                 
                 await writeAndConfirm();
@@ -476,3 +482,100 @@ new Array(env.CONSISTENCY_LOAD_TEST_ITERS).fill(0).forEach((_, i) => {
         })
     })
 });
+
+new Array(env.LARGE_DOC_TEST_ITERS).fill(0).map((_, i) => {
+    describe(`large docs iter: ${i}`, () => {
+        it(`works well for ${env.LARGE_DOC_MAX_DOC_SIZE_MB}MB docs`, async () => {
+            log(`large docs test for ${env.LARGE_DOC_MAX_DOC_SIZE_MB}MB`)
+
+            const docId = uuid();
+            const ydoc = new Y.Doc();
+            const yrecordlist = ydoc.getArray<Y.Map<number>>('record_list');
+
+            const onYDocUpdatePromises: Promise<void>[] = [];
+            ydoc.on('update', async (update: Uint8Array, origin: any, doc: Y.Doc) => {
+                onYDocUpdatePromises.push((async () => { await api.post<Uint8Array>(`/docs/${docId}/updates`, update, {headers: {'Content-Type': 'application/octet-stream'}}) })());
+            })
+
+            
+            const keys: string[] = new Array(10).fill(0).map((_, i) => `n${i}`)
+
+            let docSizeInBytes: number = 0
+            let i = 0;
+
+            const writesPromise = new Promise<void>((resolve) => {
+                const t = setInterval(() => {
+                    const record = new Y.Map<number>();
+                    for (const k of keys) {
+                        record.set(k, Math.floor(Math.random() * 1000000000))
+                    }
+    
+                    yrecordlist.insert(yrecordlist.length, [record]);
+                    if (i % env.LARGE_DOC_CHECK_DOC_SIZE_PER_ITER === 0) {
+                        docSizeInBytes = Y.encodeStateAsUpdate(ydoc).length;
+                    }
+    
+                    logUpdate(`inserted record: ${i++}\ndoc size in MB: ${docSizeInBytes / (1024 * 1024)}`)
+                    if (docSizeInBytes >= env.LARGE_DOC_MAX_DOC_SIZE_MB * 1024 * 1024) {
+                        clearInterval(t);
+                        resolve();
+                    }
+                }, env.LARGE_DOC_YDOC_WRITE_INTERVAL_MS);
+            })
+
+            await writesPromise;
+            await Promise.all(onYDocUpdatePromises);
+            await wait(env.LARGE_DOC_YDOC_READ_TIMEOUT_MS);
+            const res = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
+            const update = new Uint8Array(res.data);
+            const ydoc2 = new Y.Doc();
+            Y.applyUpdate(ydoc2, update);
+            const yrecordlist2 = ydoc2.getArray<Y.Map<number>>('record_list')
+
+            const mismatches: {index: number, key: string, want: number | undefined, got: number | undefined}[] = [];
+
+            log('matching ydocs')
+            for (let i = 0; i < yrecordlist.length; i++) {
+                const yrecordwant = yrecordlist.get(i);
+                const yrecordgot = yrecordlist2.get(i);
+
+                logUpdate(`matching yrecord: ${i}`)
+
+                for (const k of keys) {
+                    const want = yrecordwant.get(k)
+                    const got = yrecordgot.get(k);
+
+                    if (want !== got) {
+                        mismatches.push({index: i, key: k, want, got})
+                    }
+                }
+            }
+
+            log('mismatches', mismatches)
+            expect(mismatches.length).to.eq(0);
+            
+            log('comparing 2 read responses', update.length)
+            
+            const res2 = await api.get<ArrayBuffer>(`/docs/${docId}/updates`, { responseType: 'arraybuffer' });
+            const update2 = new Uint8Array(res2.data);
+            const ydoc3 = new Y.Doc();
+
+            Y.applyUpdate(ydoc3, update2);
+            const yrecordlist3 = ydoc3.getArray<Y.Map<number>>('record_list')
+
+            for (let i=0; i < yrecordlist2.length; i++) {
+                const yrecordwant = yrecordlist2.get(i);
+                const yrecordgot = yrecordlist3.get(i);
+
+                logUpdate(`matching yrecord: ${i}`)
+
+                for (const k of keys) {
+                    const want = yrecordwant.get(k)
+                    const got = yrecordgot.get(k);
+
+                    expect(want).eq(got);
+                }
+            }
+        })
+    })
+})
